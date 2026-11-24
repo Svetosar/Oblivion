@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// Package server wires the kernel HTTP server.
+package server
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"oblivion/internal/config"
+	"oblivion/internal/httpx"
+)
+
+// New builds the HTTP server. Routes are registered on a ServeMux (Go 1.22+ patterns).
+func New(cfg config.Config, log *slog.Logger, d *sql.DB) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := d.PingContext(ctx); err != nil {
+			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte("ok\n"))
+	})
+
+	handler := httpx.Chain(mux,
+		httpx.Recover(log),
+		httpx.AccessLog(log),
+		httpx.SecurityHeaders(cfg.SecureCookie),
+		httpx.MaxBody(cfg.MaxBodyBytes),
+	)
+	return &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+	}
+}
+
+// Serve runs the server until ctx is cancelled, then shuts down gracefully.
+func Serve(ctx context.Context, srv *http.Server, wait time.Duration, log *slog.Logger) error {
+	errc := make(chan error, 1)
+	go func() {
+		log.Info("listening", "addr", srv.Addr)
+		errc <- srv.ListenAndServe()
+	}()
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	sctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	if err := srv.Shutdown(sctx); err != nil {
+		return err
+	}
+	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
