@@ -4,13 +4,16 @@ Small, privacy/security-first CMS. Go backend + React admin, "everything is a pl
 Target: 1 GB RAM, 1 CPU, Ubuntu amd64, Podman/Docker. **Beta deadline: 2026-12-04.**
 License: AGPL-3.0-or-later (SPDX header in every Go file).
 
-## Working rules (from the user — mandatory)
+## Working rules (from the user — mandatory, ABSOLUTE)
+- Deviating from these rules is categorically forbidden. If a rule blocks you, stop and ask.
+- Merge into `main` ONLY after the user explicitly agrees to that specific merge.
+- The public site must be in Russian. Admin UI may be English or Russian.
 - Never state what you haven't verified (run it, test it, `go doc`, context7). If unverified say "не уверен / не проверял".
 - Criticize everything hard: user's ideas, your own plan/code, libraries. Don't just agree.
 - Talk to the user in Russian. Code, comments, commit messages in English.
 - No internet: library docs via context7 only. Server setup is handled by the user (no root, don't plan it).
 - Check the license of every dependency (Go and npm) is AGPL-compatible before adding it.
-- Git: small logical commits, every commit ends with the Co-Authored-By trailer given by the current system reminder. Never push unless asked. Keep `main` green on every commit (vet + tests); work in branches.
+- Git: small logical commits, every commit ends with the Co-Authored-By trailer given by the current system reminder. Never push unless asked. Keep `main` green on every commit (vet + tests); work in feature branches.
 - The name "oblivion" is a codename: keep it centralized (`internal/brand`), never bake it into cookie names, headers, or plugin-visible strings.
 - No CGO. Keep RAM low.
 - Memory dir: `~/.claude/projects/-home-svetosar-oblivion/memory/` — read `progress-and-decisions.md` first on resume and update it when state changes.
