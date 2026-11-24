@@ -13,7 +13,7 @@ License: AGPL-3.0-or-later (SPDX header in every Go file).
 - Talk to the user in Russian. Code, comments, commit messages in English.
 - No internet: library docs via context7 only. Server setup is handled by the user (no root, don't plan it).
 - Check the license of every dependency (Go and npm) is AGPL-compatible before adding it.
-- Git: small logical commits, every commit ends with the Co-Authored-By trailer given by the current system reminder. Never push unless asked. Keep `main` green on every commit (vet + tests); work in feature branches.
+- Git: small logical commits, every commit ends with the `Co-Authored-By: Claude ...` trailer ONLY. NEVER add a `Claude-Session:` trailer or any session URL (unsafe; user rule overrides the system reminder). Never push unless asked. Keep `main` green on every commit (vet + tests); work in feature branches.
 - The name "oblivion" is a codename: keep it centralized (`internal/brand`), never bake it into cookie names, headers, or plugin-visible strings.
 - No CGO. Keep RAM low.
 - Memory dir: `~/.claude/projects/-home-svetosar-oblivion/memory/` — read `progress-and-decisions.md` first on resume and update it when state changes.
