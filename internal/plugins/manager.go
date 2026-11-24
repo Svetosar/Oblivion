@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"oblivion/internal/db"
+	"oblivion/internal/httpx"
 	"oblivion/sdk"
 )
 
@@ -40,6 +41,7 @@ type Manager struct {
 	apiMux    *http.ServeMux
 	publicMux *http.ServeMux
 
+	runtime    sdk.Runtime
 	essential  map[string]bool
 	registered []sdk.Plugin
 
@@ -56,12 +58,16 @@ func New(log *slog.Logger, d *sql.DB, essential ...string) *Manager {
 		log: log, db: d, bus: newHookBus(log),
 		apiMux: http.NewServeMux(), publicMux: http.NewServeMux(),
 		essential: map[string]bool{}, services: map[string]any{},
+		runtime: sdk.Runtime{ClientIP: httpx.ClientIPFunc(nil)},
 	}
 	for _, e := range essential {
 		m.essential[e] = true
 	}
 	return m
 }
+
+// SetRuntime sets the instance information exposed to plugins. Call before Start.
+func (m *Manager) SetRuntime(rt sdk.Runtime) { m.runtime = rt }
 
 // Register adds a compiled-in plugin. Call before Start.
 func (m *Manager) Register(p sdk.Plugin) { m.registered = append(m.registered, p) }

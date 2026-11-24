@@ -29,6 +29,8 @@ var _ sdk.Host = (*host)(nil)
 
 func (h *host) Log() *slog.Logger { return h.log }
 
+func (h *host) Runtime() sdk.Runtime { return h.m.runtime }
+
 func (h *host) need(c sdk.Capability) error {
 	if !h.caps[c] {
 		return fmt.Errorf("%w: %s (plugin %s)", sdk.ErrCapabilityDenied, c, h.id)

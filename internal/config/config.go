@@ -6,9 +6,11 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"oblivion/internal/brand"
@@ -16,13 +18,14 @@ import (
 
 // Config is the immutable runtime configuration.
 type Config struct {
-	Listen       string        // HTTP listen address
-	DataDir      string        // directory for sqlite, media, plugins
-	LogLevel     string        // debug|info|warn|error
-	LogJSON      bool          // JSON logs instead of text
-	SecureCookie bool          // set Secure flag on cookies (must be true behind TLS)
-	MaxBodyBytes int64         // default request body limit
-	ShutdownWait time.Duration // graceful shutdown timeout
+	Listen         string         // HTTP listen address
+	DataDir        string         // directory for sqlite, media, plugins
+	LogLevel       string         // debug|info|warn|error
+	LogJSON        bool           // JSON logs instead of text
+	SecureCookie   bool           // set Secure flag on cookies (must be true behind TLS)
+	MaxBodyBytes   int64          // default request body limit
+	ShutdownWait   time.Duration  // graceful shutdown timeout
+	TrustedProxies []netip.Prefix // peers whose X-Forwarded-For is honored
 }
 
 // DBPath returns the SQLite file path.
@@ -67,10 +70,34 @@ func Load() (Config, error) {
 	}
 	c.MaxBodyBytes = 1 << 20 // 1 MiB; media upload routes set their own limit
 	c.ShutdownWait = 15 * time.Second
+	if c.TrustedProxies, err = parseProxies(env("TRUSTED_PROXIES")); err != nil {
+		return c, err
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return c, fmt.Errorf("%sLOG_LEVEL: unknown level %q", brand.EnvPrefix, c.LogLevel)
 	}
 	return c, nil
+}
+
+// parseProxies parses a comma-separated list of IPs or CIDRs.
+func parseProxies(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(part); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(part)
+		if err != nil {
+			return nil, fmt.Errorf("%sTRUSTED_PROXIES: %q is not an IP or CIDR", brand.EnvPrefix, part)
+		}
+		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return out, nil
 }
