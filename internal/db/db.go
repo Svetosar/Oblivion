@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -51,21 +52,27 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	_ = os.Chmod(path, 0o600)
-	if err := migrate(ctx, d, migrationsFS); err != nil {
+	if err := Migrate(ctx, d, migrationsFS, "schema_migrations"); err != nil {
 		d.Close()
 		return nil, err
 	}
 	return d, nil
 }
 
-// migrate applies every not-yet-applied migrations/NNNN_name.sql in order,
-// each in its own transaction, and records it in schema_migrations.
-func migrate(ctx context.Context, d *sql.DB, fsys fs.FS) error {
-	if _, err := d.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+var tableRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+
+// Migrate applies every not-yet-applied migrations/NNNN_name.sql found in fsys,
+// in name order, each in its own transaction, recording progress in table
+// (a trusted identifier: validated, never user input).
+func Migrate(ctx context.Context, d *sql.DB, fsys fs.FS, table string) error {
+	if !tableRe.MatchString(table) {
+		return fmt.Errorf("invalid migrations table name %q", table)
+	}
+	if _, err := d.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (
 		version TEXT PRIMARY KEY,
 		applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 	) STRICT`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
+		return fmt.Errorf("create %s: %w", table, err)
 	}
 	entries, err := fs.ReadDir(fsys, "migrations")
 	if err != nil {
@@ -80,7 +87,7 @@ func migrate(ctx context.Context, d *sql.DB, fsys fs.FS) error {
 	sort.Strings(names)
 	for _, name := range names {
 		var n int
-		if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&n); err != nil {
+		if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE version = ?`, name).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
@@ -98,7 +105,7 @@ func migrate(ctx context.Context, d *sql.DB, fsys fs.FS) error {
 			tx.Rollback()
 			return fmt.Errorf("migration %s: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version) VALUES (?)`, name); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO `+table+`(version) VALUES (?)`, name); err != nil {
 			tx.Rollback()
 			return err
 		}
