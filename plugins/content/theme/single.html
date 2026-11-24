@@ -1,0 +1,7 @@
+{{define "main"}}
+<article>
+<h1>{{.Item.Title}}</h1>
+{{if eq .Item.Kind "post"}}<p class="meta"><time datetime="{{date .Item.PublishedAt}}">{{date .Item.PublishedAt}}</time> · {{.Item.AuthorName}}</p>{{end}}
+<div class="body">{{.Body}}</div>
+</article>
+{{end}}

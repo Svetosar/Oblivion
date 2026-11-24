@@ -1,0 +1,5 @@
+{{define "main"}}
+{{range .Posts}}<article class="entry"><h2><a href="/posts/{{.Slug}}">{{.Title}}</a></h2><time datetime="{{date .PublishedAt}}">{{date .PublishedAt}}</time></article>
+{{else}}<p>Nothing has been published yet.</p>{{end}}
+<nav class="pager">{{if .Newer}}<a href="{{.Newer}}">&larr; Newer</a>{{end}}{{if .Older}}<a href="{{.Older}}">Older &rarr;</a>{{end}}</nav>
+{{end}}
