@@ -259,10 +259,19 @@ func etagMatches(header, etag string) bool {
 // finalHTML lets other plugins post-process rendered article HTML (for example
 // the media plugin adds image dimensions). It is a filter, not a dependency:
 // without listeners the HTML passes through unchanged.
+//
+// Whatever the filters return is untrusted: a buggy or hostile filter must not
+// be able to inject script. A changed result is therefore sanitized again with
+// the article policy plus the few image attributes filters legitimately add.
+// An unchanged result was sanitized when saved and is not processed twice.
 func (p *Plugin) finalHTML(ctx context.Context, h string) string {
 	v, err := p.h.ApplyFilters(ctx, "content.html", h)
-	if s, ok := v.(string); ok && err == nil {
+	s, ok := v.(string)
+	if err != nil || !ok {
+		return h
+	}
+	if s == h {
 		return s
 	}
-	return h
+	return filteredPolicy.Sanitize(s)
 }

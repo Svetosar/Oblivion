@@ -4,6 +4,7 @@ package content
 
 import (
 	"bytes"
+	"regexp"
 
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/parser"
@@ -22,13 +23,23 @@ var (
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithParserOptions(parser.WithASTTransformers(util.Prioritized(headingShift{}, 100))),
 	)
-	policy = func() *bluemonday.Policy {
-		p := bluemonday.UGCPolicy()
-		p.RequireNoReferrerOnLinks(true)
-		p.RequireNoFollowOnLinks(true)
+	policy         = newPolicy()
+	filteredPolicy = func() *bluemonday.Policy {
+		// Output of content.html filters: the same policy, plus the image hints
+		// the media plugin adds (width/height are already allowed by UGC).
+		p := newPolicy()
+		p.AllowAttrs("loading").Matching(regexp.MustCompile(`^(lazy|eager)$`)).OnElements("img")
+		p.AllowAttrs("decoding").Matching(regexp.MustCompile(`^(async|sync|auto)$`)).OnElements("img")
 		return p
 	}()
 )
+
+func newPolicy() *bluemonday.Policy {
+	p := bluemonday.UGCPolicy()
+	p.RequireNoReferrerOnLinks(true)
+	p.RequireNoFollowOnLinks(true)
+	return p
+}
 
 // renderMarkdown converts Markdown to sanitized HTML.
 func renderMarkdown(src string) (string, error) {

@@ -62,7 +62,28 @@ type env struct {
 	now time.Time
 }
 
+// evilFilter is a plugin whose content.html filter injects markup; the content
+// plugin must not trust what filters return.
+type evilFilter struct{}
+
+func (evilFilter) Manifest() sdk.Manifest {
+	return sdk.Manifest{ID: "evil", Name: "Evil", Version: "0", APIVersion: sdk.APIVersion,
+		Capabilities: []sdk.Capability{sdk.CapHooks}, Hooks: []string{"content.html"}}
+}
+func (evilFilter) Init(_ context.Context, h sdk.Host) error {
+	return h.OnFilter("content.html", func(_ context.Context, v any) (any, error) {
+		return v.(string) + `<script>alert(1)</script><img src="/media/` + strings.Repeat("a", 32) +
+			`.png" onerror="alert(2)" width="10" height="10" loading="lazy" decoding="async">` +
+			`<a href="javascript:alert(3)">x</a>`, nil
+	})
+}
+func (evilFilter) Close(context.Context) error { return nil }
+
 func newEnv(t *testing.T) *env {
+	return newEnvWith(t)
+}
+
+func newEnvWith(t *testing.T, extra ...sdk.Plugin) *env {
 	t.Helper()
 	d, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -74,6 +95,9 @@ func newEnv(t *testing.T) *env {
 	m := plugins.New(slog.New(slog.NewTextHandler(io.Discard, nil)), d)
 	m.Register(fakeIdentity{})
 	m.Register(e.p)
+	for _, x := range extra {
+		m.Register(x)
+	}
 	if err := m.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -778,5 +802,22 @@ func TestSettingsConcurrentPutsStayConsistent(t *testing.T) {
 	}
 	if cached != stored.SiteTitle {
 		t.Fatalf("cache %q != store %q", cached, stored.SiteTitle)
+	}
+}
+
+func TestContentHTMLFilterOutputIsSanitizedAgain(t *testing.T) {
+	e := newEnvWith(t, evilFilter{})
+	e.create(editor, "post", "Hello", "published", map[string]any{"slug": "p"})
+	for _, path := range []string{"/posts/p", "/feed.xml"} {
+		e.setBase("https://example.com")
+		b := e.get(path, "").Body.String()
+		for _, bad := range []string{"alert(", "onerror", "javascript:"} {
+			if strings.Contains(strings.ToLower(b), bad) {
+				t.Errorf("%s: filter output was not sanitized, found %q", path, bad)
+			}
+		}
+		if path == "/posts/p" && !strings.Contains(b, `loading="lazy"`) {
+			t.Errorf("%s: legitimate image hints were stripped", path)
+		}
 	}
 }
