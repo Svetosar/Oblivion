@@ -7,3 +7,7 @@
 node_modules/
 web/admin/dist/
 .env
+
+admin/node_modules/
+internal/admin/dist/*
+!internal/admin/dist/.gitkeep

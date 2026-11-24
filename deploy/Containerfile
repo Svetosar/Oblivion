@@ -1,10 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 ARG GO_VERSION=1.27
+FROM docker.io/library/node:22 AS admin
+WORKDIR /src/admin
+COPY admin/package.json admin/package-lock.json ./
+RUN npm ci
+COPY admin/ ./
+# vite writes to ../internal/admin/dist
+RUN npm run build
+
 FROM docker.io/library/golang:${GO_VERSION} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=admin /src/internal/admin/dist/ internal/admin/dist/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o /out/oblivion ./cmd/oblivion
 
 FROM scratch

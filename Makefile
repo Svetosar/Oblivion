@@ -4,7 +4,10 @@ BIN     := bin/oblivion
 IMAGE   ?= localhost/oblivion:dev
 ENGINE  ?= podman
 
-.PHONY: build test vet check run image image-save
+.PHONY: build test vet check run image image-save admin
+# Build the admin SPA into internal/admin/dist (embedded into the binary).
+admin:
+	cd admin && npm ci && npm run build
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o $(BIN) ./cmd/oblivion
 vet:
@@ -12,7 +15,7 @@ vet:
 test:
 	$(GO) test -race ./...
 check: vet test
-run: build
+run: admin build
 	OBLIVION_SECURE_COOKIE=false $(BIN)
 image:
 	$(ENGINE) build -f deploy/Containerfile -t $(IMAGE) .

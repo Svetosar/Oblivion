@@ -140,6 +140,11 @@ func TestSetupFlow(t *testing.T) {
 	if e.p.setupToken == "" {
 		t.Fatal("no setup token issued on an empty database")
 	}
+	st := c.do("GET", "/setup", nil)
+	want(t, st, 200)
+	if decodeBody(t, st)["available"] != true {
+		t.Fatal("setup should be available on an empty database")
+	}
 	want(t, c.do("POST", "/setup", map[string]string{"token": "wrong", "username": "admin", "password": adminPW}), 401)
 	want(t, c.do("POST", "/setup", map[string]string{"token": e.p.setupToken, "username": "x", "password": adminPW}), 400)
 	want(t, c.do("POST", "/setup", map[string]string{"token": e.p.setupToken, "username": "admin", "password": "short"}), 400)
@@ -149,6 +154,9 @@ func TestSetupFlow(t *testing.T) {
 	want(t, w, 200)
 	if got := decodeBody(t, w)["user"].(map[string]any)["username"]; got != "admin" {
 		t.Fatalf("me.username = %v", got)
+	}
+	if decodeBody(t, c.do("GET", "/setup", nil))["available"] != false {
+		t.Fatal("setup must report unavailable once a user exists")
 	}
 	// Setup is single-use.
 	want(t, c.do("POST", "/setup", map[string]string{"token": "anything", "username": "evil", "password": adminPW}), 404)

@@ -38,6 +38,7 @@ func (p *Plugin) registerRoutes() error {
 		pattern string
 		fn      http.HandlerFunc
 	}{
+		{"GET /setup", p.handleSetupStatus},
 		{"POST /setup", p.handleSetup},
 		{"POST /login", p.handleLogin},
 		{"POST /logout", p.handleLogout},
@@ -146,6 +147,14 @@ func (p *Plugin) issueSetupToken() error {
 	p.h.Log().Warn("no users exist: create the first administrator with this one-time setup token",
 		"setup_token", tok, "valid_for", setupTokenTTL.String())
 	return nil
+}
+
+// handleSetupStatus tells the admin UI whether to show the first-run screen.
+func (p *Plugin) handleSetupStatus(w http.ResponseWriter, _ *http.Request) {
+	p.mu.Lock()
+	have := p.setupToken != ""
+	p.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]bool{"available": have})
 }
 
 func (p *Plugin) handleSetup(w http.ResponseWriter, r *http.Request) {

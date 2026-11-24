@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"oblivion/internal/admin"
 	"oblivion/internal/config"
 	"oblivion/internal/httpx"
 	"oblivion/internal/plugins"
@@ -34,6 +35,9 @@ func New(cfg config.Config, log *slog.Logger, d *sql.DB, mgr *plugins.Manager) *
 	// Everything else belongs to plugins: /api/ to their API routes, the rest
 	// to their public routes. The identity middleware resolves the principal
 	// for every request and fails closed.
+	adminUI := admin.Handler()
+	mux.Handle("GET /admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))
+	mux.Handle("GET /admin/", adminUI)
 	mux.Handle("/api/", mgr.APIHandler())
 	mux.Handle("/", mgr.PublicHandler())
 
