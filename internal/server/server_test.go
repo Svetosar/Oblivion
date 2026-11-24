@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"oblivion/internal/config"
 	"oblivion/internal/db"
@@ -118,5 +120,66 @@ func TestSecurityHeadersOnEveryAnswer(t *testing.T) {
 			}
 		}
 		d.Close()
+	}
+}
+
+// The real middleware chain wraps the ResponseWriter several times. Handlers that
+// extend their own deadlines through http.ResponseController (the media upload
+// route) only work if every wrapper exposes Unwrap.
+type slowUploader struct{}
+
+func (slowUploader) Manifest() sdk.Manifest {
+	return sdk.Manifest{ID: "slow", Name: "slow", Version: "0", APIVersion: sdk.APIVersion,
+		Capabilities: []sdk.Capability{sdk.CapHTTPAPI}}
+}
+func (slowUploader) Init(_ context.Context, h sdk.Host) error {
+	return h.HandleAPI("POST /up", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := http.NewResponseController(w).SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			http.Error(w, "cannot extend deadline: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(strings.Repeat("ok ", 1) + strconv.Itoa(len(b))))
+	}))
+}
+
+func TestResponseControllerWorksThroughTheWholeChain(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	d, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	mgr := plugins.New(log, d)
+	mgr.Register(slowUploader{})
+	if err := mgr.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(config.Config{MaxBodyBytes: 1 << 20}, log, d, mgr)
+	srv.ReadTimeout = 300 * time.Millisecond // far shorter than the slow body below
+	ts := httptest.NewUnstartedServer(srv.Handler)
+	ts.Config.ReadTimeout = srv.ReadTimeout
+	ts.Start()
+	defer ts.Close()
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, _ = pw.Write([]byte("first"))
+		time.Sleep(700 * time.Millisecond)
+		_, _ = pw.Write([]byte("second"))
+		_ = pw.Close()
+	}()
+	resp, err := http.Post(ts.URL+"/api/v1/slow/up", "application/octet-stream", pr)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || string(body) != "ok 11" {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
 	}
 }

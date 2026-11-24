@@ -42,6 +42,7 @@ type Plugin struct {
 	now   func() time.Time
 	sem   chan struct{} // bounds in-memory uploads: 1 GB host
 	quota int64         // per-uploader byte quota
+	dc    dimCache
 }
 
 func New() *Plugin {
@@ -55,7 +56,8 @@ func (p *Plugin) Manifest() sdk.Manifest {
 		Version:      "0.1.0",
 		APIVersion:   sdk.APIVersion,
 		Description:  "Image uploads with metadata stripping",
-		Capabilities: []sdk.Capability{sdk.CapDB, sdk.CapFiles, sdk.CapHTTPAPI, sdk.CapHTTPPublic},
+		Capabilities: []sdk.Capability{sdk.CapDB, sdk.CapFiles, sdk.CapHTTPAPI, sdk.CapHTTPPublic, sdk.CapHooks},
+		Hooks:        []string{htmlHook},
 		Permissions:  []string{permRead, permWrite, permManage},
 		Migrations:   migrationsFS,
 		MaxBodyBytes: maxRequest,
@@ -71,6 +73,9 @@ func (p *Plugin) Init(_ context.Context, h sdk.Host) error {
 		return err
 	}
 	p.h = h
+	if err := h.OnFilter(htmlHook, p.filterHTML); err != nil {
+		return err
+	}
 	for _, r := range []struct {
 		api     bool
 		pattern string

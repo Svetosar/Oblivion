@@ -27,8 +27,10 @@ const (
 
 type Plugin struct {
 	db  *sql.DB
+	kv  sdk.KV
 	h   sdk.Host
 	now func() time.Time
+	st  settingsStore
 }
 
 func New() *Plugin { return &Plugin{now: time.Now} }
@@ -40,8 +42,8 @@ func (p *Plugin) Manifest() sdk.Manifest {
 		Version:      "0.1.0",
 		APIVersion:   sdk.APIVersion,
 		Description:  "Posts and pages in Markdown with a built-in public theme",
-		Capabilities: []sdk.Capability{sdk.CapDB, sdk.CapHTTPAPI, sdk.CapHTTPPublic},
-		Permissions:  []string{permRead, permWrite, permWriteOwn, permPublish},
+		Capabilities: []sdk.Capability{sdk.CapDB, sdk.CapKV, sdk.CapHTTPAPI, sdk.CapHTTPPublic},
+		Permissions:  []string{permRead, permWrite, permWriteOwn, permPublish, permSettings},
 		Migrations:   migrationsFS,
 	}
 }
@@ -49,6 +51,9 @@ func (p *Plugin) Manifest() sdk.Manifest {
 func (p *Plugin) Init(_ context.Context, h sdk.Host) error {
 	var err error
 	if p.db, err = h.DB(); err != nil {
+		return err
+	}
+	if p.kv, err = h.KV(); err != nil {
 		return err
 	}
 	p.h = h

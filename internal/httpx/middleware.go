@@ -64,6 +64,9 @@ type statusWriter struct {
 
 func (s *statusWriter) WriteHeader(code int) { s.status = code; s.ResponseWriter.WriteHeader(code) }
 
+// Unwrap lets http.ResponseController reach the real connection (deadlines, flushing).
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // AccessLog logs method, path and status. Privacy: no IP, no query string,
 // no User-Agent, no Referer are written.
 func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {

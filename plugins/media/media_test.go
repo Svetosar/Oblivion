@@ -317,9 +317,10 @@ func (fakeIdentity) Authenticate(r *http.Request) (*sdk.Principal, error) {
 }
 
 type env struct {
-	t   *testing.T
-	h   http.Handler
-	dir string
+	t      *testing.T
+	h      http.Handler
+	dir    string
+	plugin *Plugin
 }
 
 func newEnv(t *testing.T) *env {
@@ -349,7 +350,7 @@ func newEnvWith(t *testing.T, tweak func(*Plugin)) *env {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", m.APIHandler())
 	mux.Handle("/", m.PublicHandler())
-	return &env{t: t, h: m.IdentityMiddleware(mux), dir: dir}
+	return &env{t: t, h: m.IdentityMiddleware(mux), dir: dir, plugin: pl}
 }
 
 func (e *env) req(user, method, path string, body io.Reader, ctype string) *httptest.ResponseRecorder {
@@ -633,5 +634,30 @@ func TestUploadSurvivesShortServerReadTimeout(t *testing.T) {
 	if resp.StatusCode != 201 {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status %d: %s", resp.StatusCode, b)
+	}
+}
+
+func TestHTMLFilterAddsDimensionsAndLazyLoading(t *testing.T) {
+	e := newEnv(t)
+	it := decodeItem(t, e.upload("author:3", "a.png", pngWithMetadata(t))) // 8x6
+	in := `<p>x</p><img src="` + it.URL + `" alt="a"><img src="/media/` + strings.Repeat("0", 32) + `.png" alt="unknown"><img src="https://other.example/x.png" alt="ext">`
+	got, err := e.plugin.filterHTML(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := got.(string)
+	if !strings.Contains(out, `<img src="`+it.URL+`" alt="a" width="8" height="6" loading="lazy" decoding="async">`) {
+		t.Errorf("known image not annotated: %s", out)
+	}
+	if strings.Count(out, "width=") != 1 {
+		t.Errorf("unknown and external images must be left alone: %s", out)
+	}
+	// Idempotent: running the filter again changes nothing.
+	again, _ := e.plugin.filterHTML(context.Background(), out)
+	if again.(string) != out {
+		t.Errorf("filter is not idempotent: %s", again)
+	}
+	if v, _ := e.plugin.filterHTML(context.Background(), 42); v != 42 {
+		t.Error("non-string values must pass through")
 	}
 }

@@ -46,6 +46,8 @@ func (p *Plugin) registerAPI() error {
 		{"PUT /items/{id}", p.handleUpdate},
 		{"DELETE /items/{id}", p.handleDelete},
 		{"POST /preview", p.handlePreview},
+		{"GET /settings", p.handleGetSettings},
+		{"PUT /settings", p.handlePutSettings},
 	}
 	for _, rt := range routes {
 		if err := p.h.HandleAPI(rt.pattern, rt.fn); err != nil {

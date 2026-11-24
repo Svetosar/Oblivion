@@ -1,16 +1,29 @@
 {{define "layout"}}<!doctype html>
-<html lang="en">
+<html lang="{{.UI.Lang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{if .Title}}{{.Title}} — {{end}}{{.SiteTitle}}</title>
+<title>{{.Head.Title}}</title>
+{{with .Head.Description}}<meta name="description" content="{{.}}">
+{{end}}{{with .Head.Canonical}}<link rel="canonical" href="{{.}}">
+{{end}}{{with .Head.RSS}}<link rel="alternate" type="application/rss+xml" title="{{$.SiteTitle}}" href="{{.}}">
+{{end}}{{with .Head.OG}}<meta property="og:type" content="{{.Type}}">
+<meta property="og:title" content="{{.Title}}">
+{{with .Description}}<meta property="og:description" content="{{.}}">
+{{end}}{{with .URL}}<meta property="og:url" content="{{.}}">
+{{end}}{{with .Image}}<meta property="og:image" content="{{.}}">
+{{end}}<meta property="og:site_name" content="{{.SiteName}}">
+<meta property="og:locale" content="{{.Locale}}">
+<meta name="twitter:card" content="{{if .Image}}summary_large_image{{else}}summary{{end}}">
+{{end}}{{.Head.JSONLD}}
 <link rel="stylesheet" href="/theme/style.css">
 </head>
 <body>
+<a class="skip" href="#main">{{.UI.SkipToContent}}</a>
 <header>
 <a class="site" href="/">{{.SiteTitle}}</a>
 <nav>{{range .Nav}}<a href="/{{.Slug}}">{{.Title}}</a>{{end}}</nav>
 </header>
-<main>{{template "main" .}}</main>
+<main id="main">{{template "main" .}}</main>
 </body>
 </html>{{end}}

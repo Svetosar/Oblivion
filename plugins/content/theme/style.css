@@ -7,6 +7,7 @@ header { display: flex; justify-content: space-between; align-items: baseline; g
 header .site { font-weight: 700; text-decoration: none; color: inherit; }
 nav a { margin-left: 1rem; }
 a { color: var(--link); }
+h1 { line-height: 1.2; }
 .entry h2 { margin: 1.5rem 0 0; font-size: 1.3rem; }
 time, .meta { color: var(--muted); font-size: .9rem; }
 .pager { display: flex; justify-content: space-between; margin-top: 2rem; }
@@ -14,3 +15,7 @@ time, .meta { color: var(--muted); font-size: .9rem; }
 .body pre { overflow-x: auto; padding: .75rem; background: color-mix(in srgb, var(--fg) 8%, transparent); }
 .body table { border-collapse: collapse; }
 .body td, .body th { border: 1px solid var(--muted); padding: .25rem .5rem; }
+.skip { position: absolute; left: -999px; top: 0; padding: .5rem 1rem; background: var(--bg); z-index: 10; }
+.skip:focus { left: 0; }
+.lead { color: var(--muted); margin-top: -.5rem; }
+.entry p { margin: .25rem 0 0; color: var(--muted); font-size: .95rem; }

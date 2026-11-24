@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log/slog"
@@ -371,7 +372,7 @@ func TestListAndPreview(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &pv); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(pv.HTML, "<script") || !strings.Contains(pv.HTML, "<h1>Hi") {
+	if strings.Contains(pv.HTML, "<script") || !strings.Contains(pv.HTML, "<h2>Hi") {
 		t.Fatalf("preview: %q", pv.HTML)
 	}
 }
@@ -383,13 +384,350 @@ func TestPagination(t *testing.T) {
 		e.create(editor, "post", fmt.Sprintf("Post %02d", i), "published", nil)
 	}
 	p1 := e.do("", "GET", "/", nil).Body.String()
-	if !strings.Contains(p1, `href="/?page=2"`) || strings.Contains(p1, "Newer") {
+	if !strings.Contains(p1, `href="/?page=2"`) || strings.Contains(p1, "Новее") {
 		t.Fatalf("page 1 pager wrong: %s", p1)
 	}
 	p2 := e.do("", "GET", "/?page=2", nil).Body.String()
-	if !strings.Contains(p2, "Post 00") || strings.Contains(p2, "Older") || !strings.Contains(p2, `href="/"`) {
+	if !strings.Contains(p2, "Post 00") || strings.Contains(p2, "Старше") || !strings.Contains(p2, `href="/"`) {
 		t.Fatalf("page 2 wrong: %s", p2)
 	}
-	want(t, e.do("", "GET", "/?page=99999999999", nil), 200) // junk page numbers are clamped, never an error
-	want(t, e.do("", "GET", "/?page=-3", nil), 200)
+	// Pages past the end and junk numbers are 404s, not thin duplicate pages.
+	for _, q := range []string{"3", "99999999999", "-3", "0", "abc"} {
+		want(t, e.do("", "GET", "/?page="+q, nil), 404)
+	}
+}
+
+// ---- SEO, language, settings ----------------------------------------------
+
+func (e *env) setBase(base string) {
+	e.t.Helper()
+	w := e.do(admin, "PUT", "/api/v1/content/settings", map[string]any{
+		"site_title": "Дневник", "site_description": "Заметки обо всём", "base_url": base, "content_lang": "ru"})
+	want(e.t, w, 200)
+}
+
+func (e *env) get(path, acceptLang string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("GET", "http://cms.test"+path, nil)
+	if acceptLang != "" {
+		r.Header.Set("Accept-Language", acceptLang)
+	}
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, r)
+	return w
+}
+
+func TestDefaultsAreRussianAndSafeWithoutBaseURL(t *testing.T) {
+	e := newEnv(t)
+	e.create(editor, "post", "Первый пост", "published", map[string]any{"body_md": "# Раздел\n\nТекст поста."})
+	w := e.get("/posts/pervyy-post", "")
+	want(t, w, 200)
+	b := w.Body.String()
+	for _, need := range []string{`<html lang="ru">`, "<title>Первый пост — Мой сайт</title>", `<meta name="description" content="Раздел Текст поста.">`, `<article lang="ru">`, "Автор: ed"} {
+		if !strings.Contains(b, need) {
+			t.Errorf("missing %q in:\n%s", need, b)
+		}
+	}
+	// Without a configured base URL nothing absolute may be invented.
+	for _, bad := range []string{"canonical", "application/ld+json", "og:url", "og:image", "application/rss+xml", "cms.test"} {
+		if strings.Contains(b, bad) {
+			t.Errorf("unexpected %q without base URL", bad)
+		}
+	}
+	if !strings.Contains(b, `og:title`) || !strings.Contains(b, `og:locale" content="ru_RU"`) {
+		t.Error("open graph basics missing")
+	}
+	want(t, e.get("/sitemap.xml", ""), 404)
+	want(t, e.get("/feed.xml", ""), 404)
+	rb := e.get("/robots.txt", "")
+	want(t, rb, 200)
+	if !strings.Contains(rb.Body.String(), "Disallow: /admin/") || strings.Contains(rb.Body.String(), "Sitemap:") {
+		t.Fatalf("robots: %q", rb.Body)
+	}
+	// One <h1> per page: "# Раздел" in the body becomes <h2>.
+	if strings.Count(b, "<h1") != 1 || !strings.Contains(b, "<h2>Раздел</h2>") {
+		t.Errorf("heading structure wrong:\n%s", b)
+	}
+	// The front page has its own <h1>.
+	if idx := e.get("/", "").Body.String(); strings.Count(idx, "<h1") != 1 {
+		t.Errorf("front page must have exactly one h1:\n%s", idx)
+	}
+}
+
+func TestHeadMetadataWithBaseURL(t *testing.T) {
+	e := newEnv(t)
+	e.setBase("https://example.com/")
+	e.create(editor, "post", "Заметка про море", "published", map[string]any{
+		"body_md": "Описание поста.\n\n![волна](/media/0123456789abcdef0123456789abcdef.png)", "slug": "more"})
+	e.create(editor, "page", "О сайте", "published", map[string]any{"slug": "about"})
+
+	b := e.get("/posts/more", "").Body.String()
+	for _, need := range []string{
+		`<link rel="canonical" href="https://example.com/posts/more">`,
+		`<meta property="og:type" content="article">`,
+		`<meta property="og:url" content="https://example.com/posts/more">`,
+		`<meta property="og:image" content="https://example.com/media/0123456789abcdef0123456789abcdef.png">`,
+		`<meta name="twitter:card" content="summary_large_image">`,
+		`<link rel="alternate" type="application/rss+xml" title="Дневник" href="https://example.com/feed.xml">`,
+		"<title>Заметка про море — Дневник</title>",
+	} {
+		if !strings.Contains(b, need) {
+			t.Errorf("missing %q in:\n%s", need, b)
+		}
+	}
+	// JSON-LD is valid JSON with the right type and absolute URLs.
+	ld := between(t, b, `<script type="application/ld+json">`, `</script>`)
+	var post map[string]any
+	if err := json.Unmarshal([]byte(ld), &post); err != nil {
+		t.Fatalf("invalid JSON-LD %q: %v", ld, err)
+	}
+	if post["@type"] != "BlogPosting" || post["headline"] != "Заметка про море" || post["mainEntityOfPage"] != "https://example.com/posts/more" ||
+		post["inLanguage"] != "ru" || post["datePublished"] == nil {
+		t.Errorf("JSON-LD: %v", post)
+	}
+	if a, _ := post["author"].(map[string]any); a["name"] != "ed" {
+		t.Errorf("author: %v", post["author"])
+	}
+
+	page := e.get("/about", "").Body.String()
+	if !strings.Contains(page, `"@type":"WebPage"`) || !strings.Contains(page, `og:type" content="website"`) {
+		t.Errorf("page metadata wrong:\n%s", page)
+	}
+	home := e.get("/", "").Body.String()
+	if !strings.Contains(home, `"@type":"WebSite"`) || !strings.Contains(home, `<link rel="canonical" href="https://example.com/">`) ||
+		!strings.Contains(home, `<meta name="description" content="Заметки обо всём">`) || !strings.Contains(home, "<h1>Дневник</h1>") {
+		t.Errorf("home metadata wrong:\n%s", home)
+	}
+	// A hostile Host header must not leak into canonical links.
+	r := httptest.NewRequest("GET", "http://evil.example/posts/more", nil)
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, r)
+	if strings.Contains(w.Body.String(), "evil.example") {
+		t.Fatal("Host header reflected into the page")
+	}
+}
+
+func between(t *testing.T, s, a, b string) string {
+	t.Helper()
+	i := strings.Index(s, a)
+	if i < 0 {
+		t.Fatalf("%q not found in %s", a, s)
+	}
+	s = s[i+len(a):]
+	j := strings.Index(s, b)
+	if j < 0 {
+		t.Fatalf("%q not found after %q", b, a)
+	}
+	return s[:j]
+}
+
+func TestStructuredDataCannotBreakOutOfScript(t *testing.T) {
+	e := newEnv(t)
+	e.setBase("https://example.com")
+	e.create(editor, "post", `</script><script>alert(1)</script>`, "published", map[string]any{"slug": "x"})
+	b := e.get("/posts/x", "").Body.String()
+	if strings.Contains(b, "<script>alert") || strings.Count(b, "<script") != 1 {
+		t.Fatalf("title escaped out of JSON-LD:\n%s", b)
+	}
+}
+
+func TestSitemapRobotsAndFeed(t *testing.T) {
+	e := newEnv(t)
+	e.setBase("https://example.com")
+	e.create(editor, "post", "Пост", "published", map[string]any{"slug": "post", "body_md": "Привет, **мир**!\n\n![](/media/0123456789abcdef0123456789abcdef.png)"})
+	e.create(editor, "page", "Страница", "published", map[string]any{"slug": "page"})
+	e.create(editor, "post", "Черновик", "draft", map[string]any{"slug": "draft"})
+
+	sm := e.get("/sitemap.xml", "")
+	want(t, sm, 200)
+	var set struct {
+		URLs []struct {
+			Loc     string `xml:"loc"`
+			LastMod string `xml:"lastmod"`
+		} `xml:"url"`
+	}
+	if err := xml.Unmarshal(sm.Body.Bytes(), &set); err != nil {
+		t.Fatalf("sitemap is not XML: %v\n%s", err, sm.Body)
+	}
+	var locs []string
+	for _, u := range set.URLs {
+		locs = append(locs, u.Loc)
+	}
+	if strings.Join(locs, " ") != "https://example.com/ https://example.com/posts/post https://example.com/page" {
+		t.Errorf("sitemap locs: %v", locs)
+	}
+	if strings.Contains(sm.Body.String(), "draft") {
+		t.Error("draft in sitemap")
+	}
+
+	rb := e.get("/robots.txt", "").Body.String()
+	if !strings.Contains(rb, "Sitemap: https://example.com/sitemap.xml") {
+		t.Errorf("robots: %q", rb)
+	}
+
+	fd := e.get("/feed.xml", "")
+	want(t, fd, 200)
+	var rss struct {
+		Channel struct {
+			Title string `xml:"title"`
+			Items []struct {
+				Title       string `xml:"title"`
+				Link        string `xml:"link"`
+				GUID        string `xml:"guid"`
+				PubDate     string `xml:"pubDate"`
+				Description string `xml:"description"`
+				Content     string `xml:"http://purl.org/rss/1.0/modules/content/ encoded"`
+			} `xml:"item"`
+		} `xml:"channel"`
+	}
+	if err := xml.Unmarshal(fd.Body.Bytes(), &rss); err != nil {
+		t.Fatalf("feed is not XML: %v\n%s", err, fd.Body)
+	}
+	if rss.Channel.Title != "Дневник" || len(rss.Channel.Items) != 1 {
+		t.Fatalf("feed: %+v", rss.Channel)
+	}
+	it := rss.Channel.Items[0]
+	if it.Link != "https://example.com/posts/post" || it.Description != "Привет, мир!" ||
+		!strings.Contains(it.Content, `src="https://example.com/media/0123`) {
+		t.Errorf("feed item: %+v", it)
+	}
+	if _, err := time.Parse(time.RFC1123Z, it.PubDate); err != nil {
+		t.Errorf("pubDate %q: %v", it.PubDate, err)
+	}
+}
+
+func TestLanguageNegotiation(t *testing.T) {
+	e := newEnv(t)
+	e.create(editor, "post", "Пост", "published", map[string]any{"slug": "p"})
+	for _, tc := range []struct{ header, lang, marker string }{
+		{"", "ru", "К содержимому"},
+		{"ru-RU,ru;q=0.9", "ru", "К содержимому"},
+		{"en-US,en;q=0.9", "en", "Skip to content"},
+		{"en", "en", "Skip to content"},
+		{"de-DE,de;q=0.9", "ru", "К содержимому"},     // unsupported: default
+		{"de, en;q=0.5", "en", "Skip to content"},     // best supported
+		{"en;q=0.5, ru;q=0.9", "ru", "К содержимому"}, // q decides
+		{"en;q=0", "ru", "К содержимому"},             // q=0 means "not acceptable"
+		{"garbage;;;q=x,,", "ru", "К содержимому"},
+	} {
+		w := e.get("/posts/p", tc.header)
+		b := w.Body.String()
+		if !strings.Contains(b, `<html lang="`+tc.lang+`">`) || !strings.Contains(b, tc.marker) {
+			t.Errorf("Accept-Language %q: want UI %s", tc.header, tc.lang)
+		}
+		if !strings.Contains(b, `<article lang="ru">`) {
+			t.Errorf("Accept-Language %q: the article itself must stay in the content language", tc.header)
+		}
+		if !strings.Contains(w.Header().Get("Vary"), "Accept-Language") {
+			t.Errorf("Accept-Language %q: missing Vary", tc.header)
+		}
+	}
+	if b := e.get("/nope", "en").Body.String(); !strings.Contains(b, "Page not found") {
+		t.Error("404 not translated")
+	}
+}
+
+func TestETagAndConditionalRequests(t *testing.T) {
+	e := newEnv(t)
+	e.create(editor, "post", "Пост", "published", map[string]any{"slug": "p"})
+	w := e.get("/posts/p", "")
+	etag := w.Header().Get("ETag")
+	if etag == "" || w.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("headers: %v", w.Header())
+	}
+	cond := func(path, lang, inm string) int {
+		r := httptest.NewRequest("GET", "http://cms.test"+path, nil)
+		r.Header.Set("If-None-Match", inm)
+		if lang != "" {
+			r.Header.Set("Accept-Language", lang)
+		}
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	if c := cond("/posts/p", "", etag); c != 304 {
+		t.Fatalf("matching ETag: %d", c)
+	}
+	if c := cond("/posts/p", "", "W/"+etag); c != 304 {
+		t.Fatalf("weak ETag form (what gzip proxies send): %d", c)
+	}
+	if c := cond("/posts/p", "en", etag); c != 200 {
+		t.Fatalf("a different language variant must not be served as 304: %d", c)
+	}
+	// Editing the post changes the ETag.
+	e.now = e.now.Add(time.Hour)
+	want(t, e.do(editor, "PUT", "/api/v1/content/items/1", map[string]any{"title": "Пост 2", "slug": "p", "body_md": "new", "status": "published"}), 200)
+	if c := cond("/posts/p", "", etag); c != 200 {
+		t.Fatalf("stale ETag after edit: %d", c)
+	}
+}
+
+func TestTrailingSlashRedirects(t *testing.T) {
+	e := newEnv(t)
+	e.create(editor, "post", "Пост", "published", map[string]any{"slug": "p"})
+	e.create(editor, "page", "Страница", "published", map[string]any{"slug": "pg"})
+	for from, to := range map[string]string{"/posts/p/": "/posts/p", "/pg/": "/pg", "/pg/?utm=1": "/pg?utm=1"} {
+		w := e.get(from, "")
+		if w.Code != 301 || w.Header().Get("Location") != to {
+			t.Errorf("%s: %d -> %q, want 301 -> %q", from, w.Code, w.Header().Get("Location"), to)
+		}
+	}
+}
+
+func TestSettingsAPI(t *testing.T) {
+	e := newEnv(t)
+	put := func(user string, body map[string]any) *httptest.ResponseRecorder {
+		return e.do(user, "PUT", "/api/v1/content/settings", body)
+	}
+	good := map[string]any{"site_title": "T", "site_description": "D", "base_url": "https://example.com", "content_lang": "ru"}
+	want(t, put("", good), 401)
+	want(t, put(editor, good), 403) // only administrators change site-wide settings
+	want(t, put(alice, good), 403)
+	want(t, put(admin, good), 200)
+	want(t, e.do(alice, "GET", "/api/v1/content/settings", nil), 200) // readable for the admin UI
+	want(t, e.do("", "GET", "/api/v1/content/settings", nil), 401)
+
+	for name, bad := range map[string]map[string]any{
+		"path in url":   {"base_url": "https://example.com/blog"},
+		"no scheme":     {"base_url": "example.com"},
+		"js scheme":     {"base_url": "javascript:alert(1)"},
+		"credentials":   {"base_url": "https://u:p@example.com"},
+		"query":         {"base_url": "https://example.com?x=1"},
+		"long title":    {"site_title": strings.Repeat("я", 101)},
+		"bad lang":      {"content_lang": "Russian"},
+		"unknown field": {"nope": 1},
+	} {
+		if w := put(admin, bad); w.Code != 400 {
+			t.Errorf("%s: status %d, body %s", name, w.Code, w.Body)
+		}
+	}
+	// Trailing slash is normalized, empty language defaults to ru.
+	w := put(admin, map[string]any{"base_url": "https://example.com///", "content_lang": ""})
+	want(t, w, 200)
+	if !strings.Contains(w.Body.String(), `"base_url":"https://example.com"`) || !strings.Contains(w.Body.String(), `"content_lang":"ru"`) {
+		t.Errorf("normalization: %s", w.Body)
+	}
+	// Settings survive a restart: they live in the database, not in memory.
+	e.p.st.mu.Lock()
+	e.p.st.cached = nil
+	e.p.st.mu.Unlock()
+	if got := e.p.settings(context.Background()); got.BaseURL != "https://example.com" {
+		t.Fatalf("settings not persisted: %+v", got)
+	}
+}
+
+func TestExcerpt(t *testing.T) {
+	for in, out := range map[string]string{
+		"<p>Hello <strong>world</strong></p>":    "Hello world",
+		"<p>a &amp; b &lt;c&gt;</p>":             "a & b <c>",
+		"<h2>Заголовок</h2>\n<p>Текст   тут</p>": "Заголовок Текст тут",
+		"": "",
+	} {
+		if got := excerpt(in, 100); got != out {
+			t.Errorf("excerpt(%q) = %q, want %q", in, got, out)
+		}
+	}
+	long := excerpt("<p>"+strings.Repeat("слово ", 100)+"</p>", 50)
+	if !strings.HasSuffix(long, "…") || len([]rune(long)) > 51 || strings.Contains(long, "сло…") && !strings.Contains(long, "слово…") {
+		t.Errorf("long excerpt: %q", long)
+	}
 }
