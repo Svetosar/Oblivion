@@ -25,11 +25,51 @@ var (
 	firstImg  = regexp.MustCompile(`<img[^>]*\ssrc="(/media/[0-9a-f]{32}\.(?:jpg|png|gif|webp))"`)
 )
 
-// excerpt returns plain text of at most max characters taken from sanitized
-// HTML, cut at a word boundary: used for meta description and feed summaries.
-func excerpt(htmlIn string, max int) string {
-	t := html.UnescapeString(stripTags.Sanitize(htmlIn))
-	t = strings.TrimSpace(spaceRe.ReplaceAllString(t, " "))
+// leadMax bounds the stored plain-text lead; every excerpt is cut from it.
+const leadMax = 600
+
+var paragraphRe = regexp.MustCompile(`(?s)<p>(.*?)</p>`)
+
+// blockEnd matches the end of block-level elements; a space goes there so the
+// text of neighbouring items does not run together once the tags are gone.
+var blockEnd = regexp.MustCompile(`(?i)</(?:p|h[1-6]|li|blockquote|pre|td|th|tr|div)>|<br\s*/?>`)
+
+func plainText(htmlIn string) string {
+	t := html.UnescapeString(stripTags.Sanitize(blockEnd.ReplaceAllString(htmlIn, "$0 ")))
+	return strings.TrimSpace(spaceRe.ReplaceAllString(t, " "))
+}
+
+// leadText returns the plain text of the first paragraphs of sanitized HTML (at
+// most leadMax characters). Headings and list items are skipped when there is
+// prose, so a description never reads "Heading item item item". Without any
+// paragraph the whole text is used.
+func leadText(htmlIn string) string {
+	var parts []string
+	n := 0
+	for _, m := range paragraphRe.FindAllStringSubmatch(htmlIn, -1) {
+		if t := plainText(m[1]); t != "" {
+			parts = append(parts, t)
+			if n += utf8.RuneCountInString(t) + 1; n >= leadMax {
+				break
+			}
+		}
+	}
+	t := strings.Join(parts, " ")
+	if t == "" {
+		t = plainText(htmlIn)
+	}
+	if utf8.RuneCountInString(t) > leadMax {
+		t = string([]rune(t)[:leadMax])
+	}
+	return t
+}
+
+// derive computes what is stored next to the body at save time.
+func derive(bodyHTML string) (lead, og string) { return leadText(bodyHTML), ogImage(bodyHTML) }
+
+// excerpt cuts plain text (see leadText) to at most max characters at a word
+// boundary: used for meta description and feed summaries.
+func excerpt(t string, max int) string {
 	if utf8.RuneCountInString(t) <= max {
 		return t
 	}
@@ -176,7 +216,7 @@ func (p *Plugin) handleFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := p.db.QueryContext(r.Context(),
-		`SELECT slug, title, body_html, published_at FROM content_items WHERE kind = 'post' AND status = 'published'
+		`SELECT slug, title, body_html, lead, published_at FROM content_items WHERE kind = 'post' AND status = 'published'
 		 ORDER BY published_at DESC, id DESC LIMIT 20`)
 	if err != nil {
 		p.internalErr(w, "feed", err)
@@ -198,16 +238,16 @@ func (p *Plugin) handleFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	var newest int64
 	for rows.Next() {
-		var slug, t, body string
+		var slug, t, body, lead string
 		var pub int64
-		if err := rows.Scan(&slug, &t, &body, &pub); err != nil {
+		if err := rows.Scan(&slug, &t, &body, &lead, &pub); err != nil {
 			p.internalErr(w, "feed", err)
 			return
 		}
 		body = p.finalHTML(r.Context(), body)
 		link := st.BaseURL + "/posts/" + slug
 		ch.Items = append(ch.Items, rssItem{Title: t, Link: link, GUID: link, PubDate: time.Unix(pub, 0).UTC().Format(time.RFC1123Z),
-			Description: excerpt(body, 300), Content: absolutize(body, st.BaseURL)})
+			Description: excerpt(lead, 300), Content: absolutize(body, st.BaseURL)})
 		newest = max(newest, pub)
 	}
 	if err := rows.Err(); err != nil {

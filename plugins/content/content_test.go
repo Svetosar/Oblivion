@@ -447,7 +447,7 @@ func TestDefaultsAreRussianAndSafeWithoutBaseURL(t *testing.T) {
 	w := e.get("/posts/pervyy-post", "")
 	want(t, w, 200)
 	b := w.Body.String()
-	for _, need := range []string{`<html lang="ru">`, "<title>Первый пост — Мой сайт</title>", `<meta name="description" content="Раздел Текст поста.">`, `<article lang="ru">`, "Автор: ed"} {
+	for _, need := range []string{`<html lang="ru">`, "<title>Первый пост — Мой сайт</title>", `<meta name="description" content="Текст поста.">`, `<article lang="ru">`, "Автор: ed"} {
 		if !strings.Contains(b, need) {
 			t.Errorf("missing %q in:\n%s", need, b)
 		}
@@ -749,16 +749,22 @@ func TestSettingsAPI(t *testing.T) {
 
 func TestExcerpt(t *testing.T) {
 	for in, out := range map[string]string{
-		"<p>Hello <strong>world</strong></p>":    "Hello world",
-		"<p>a &amp; b &lt;c&gt;</p>":             "a & b <c>",
-		"<h2>Заголовок</h2>\n<p>Текст   тут</p>": "Заголовок Текст тут",
-		"": "",
+		"<p>Hello <strong>world</strong></p>":                  "Hello world",
+		"<p>a &amp; b &lt;c&gt;</p>":                           "a & b <c>",
+		"<h2>Заголовок</h2>\n<p>Текст   тут</p>":               "Текст тут", // prose wins over headings
+		"<h2>Только</h2><ul><li>заголовок</li><li>и</li></ul>": "Только заголовок и",
+		"<h2>A</h2><p>one</p><ul><li>x</li></ul><p>two</p>":    "one two",
+		"<p></p><p>  </p>": "",
+		"":                 "",
 	} {
-		if got := excerpt(in, 100); got != out {
+		if got := excerpt(leadText(in), 100); got != out {
 			t.Errorf("excerpt(%q) = %q, want %q", in, got, out)
 		}
 	}
-	long := excerpt("<p>"+strings.Repeat("слово ", 100)+"</p>", 50)
+	if n := len([]rune(leadText("<p>" + strings.Repeat("слово ", 500) + "</p>"))); n > leadMax {
+		t.Errorf("lead has %d characters, max %d", n, leadMax)
+	}
+	long := excerpt(leadText("<p>"+strings.Repeat("слово ", 100)+"</p>"), 50)
 	if !strings.HasSuffix(long, "…") || len([]rune(long)) > 51 || strings.Contains(long, "сло…") && !strings.Contains(long, "слово…") {
 		t.Errorf("long excerpt: %q", long)
 	}
@@ -819,5 +825,34 @@ func TestContentHTMLFilterOutputIsSanitizedAgain(t *testing.T) {
 		if path == "/posts/p" && !strings.Contains(b, `loading="lazy"`) {
 			t.Errorf("%s: legitimate image hints were stripped", path)
 		}
+	}
+}
+
+// Rows saved before the derived columns existed are filled in at startup.
+func TestBackfillDerived(t *testing.T) {
+	e := newEnv(t)
+	img := strings.Repeat("a", 32)
+	_, err := e.p.db.Exec(`INSERT INTO content_items(kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at)
+		VALUES ('post','old','Old','x',?, 'published', 1,'a',1,1,1)`, `<h2>H</h2><p>Старый текст.</p><img src="/media/`+img+`.png">`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.backfillDerived(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var lead, og string
+	var derived int
+	if err := e.p.db.QueryRow(`SELECT lead, og_image, derived FROM content_items WHERE slug='old'`).Scan(&lead, &og, &derived); err != nil {
+		t.Fatal(err)
+	}
+	if lead != "Старый текст." || og != "/media/"+img+".png" || derived != 1 {
+		t.Fatalf("lead=%q og=%q derived=%d", lead, og, derived)
+	}
+	if b := e.get("/", "").Body.String(); !strings.Contains(b, "<p>Старый текст.</p>") {
+		t.Error("index does not use the stored lead")
+	}
+	// A second run changes nothing and terminates.
+	if err := e.p.backfillDerived(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -81,11 +81,12 @@ const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, 
 
 type scanner interface{ Scan(dest ...any) error }
 
-func scanItem(s scanner) (itemView, error) {
+// scanItem reads itemCols; extra receives any further selected columns.
+func scanItem(s scanner, extra ...any) (itemView, error) {
 	var it itemView
 	var pub sql.NullInt64
-	err := s.Scan(&it.ID, &it.Kind, &it.Slug, &it.Title, &it.BodyMD, &it.BodyHTML, &it.Status,
-		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub)
+	err := s.Scan(append([]any{&it.ID, &it.Kind, &it.Slug, &it.Title, &it.BodyMD, &it.BodyHTML, &it.Status,
+		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub}, extra...)...)
 	if pub.Valid {
 		it.PublishedAt = &pub.Int64
 	}
@@ -261,6 +262,7 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 		p.internalErr(w, "render markdown", err)
 		return
 	}
+	lead, og := derive(html)
 	now := p.now().Unix()
 	var pub any
 	if in.Status == "published" {
@@ -268,9 +270,9 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	insert := func(slug string) (int64, error) {
 		res, err := p.db.ExecContext(r.Context(),
-			`INSERT INTO content_items(kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at)
-			 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-			in.Kind, slug, in.Title, in.BodyMD, html, in.Status, pr.UserID, pr.Username, now, now, pub)
+			`INSERT INTO content_items(kind, slug, title, body_md, body_html, lead, og_image, derived, status, author_id, author_name, created_at, updated_at, published_at)
+			 VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?)`,
+			in.Kind, slug, in.Title, in.BodyMD, html, lead, og, in.Status, pr.UserID, pr.Username, now, now, pub)
 		if err != nil {
 			return 0, err
 		}
@@ -364,6 +366,7 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		p.internalErr(w, "render markdown", err)
 		return
 	}
+	lead, og := derive(html)
 	now := p.now().Unix()
 	var pub any // keeps the first publication time across edits
 	if in.Status == "published" {
@@ -374,8 +377,8 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_, err = p.db.ExecContext(r.Context(),
-		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, status=?, updated_at=?, published_at=? WHERE id=?`,
-		slug, in.Title, in.BodyMD, html, in.Status, now, pub, id)
+		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, updated_at=?, published_at=? WHERE id=?`,
+		slug, in.Title, in.BodyMD, html, lead, og, in.Status, now, pub, id)
 	if sdk.IsUniqueViolation(err) {
 		sdk.WriteError(w, http.StatusConflict, "slug already in use")
 		return

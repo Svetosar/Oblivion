@@ -260,7 +260,7 @@ func (p *Plugin) handleIndex(w http.ResponseWriter, r *http.Request) {
 		pg = v
 	}
 	rows, err := p.db.QueryContext(r.Context(),
-		`SELECT slug, title, body_html, published_at FROM content_items WHERE kind = 'post' AND status = 'published'
+		`SELECT slug, title, lead, published_at FROM content_items WHERE kind = 'post' AND status = 'published'
 		 ORDER BY published_at DESC, id DESC LIMIT ? OFFSET ?`, pageSize+1, (pg-1)*pageSize)
 	if err != nil {
 		p.internalErr(w, "list posts", err)
@@ -270,12 +270,12 @@ func (p *Plugin) handleIndex(w http.ResponseWriter, r *http.Request) {
 	var posts []listEntry
 	for rows.Next() {
 		var e listEntry
-		var body string
-		if err := rows.Scan(&e.Slug, &e.Title, &body, &e.PublishedAt); err != nil {
+		var lead string
+		if err := rows.Scan(&e.Slug, &e.Title, &lead, &e.PublishedAt); err != nil {
 			p.internalErr(w, "scan post", err)
 			return
 		}
-		e.Excerpt = excerpt(body, 200)
+		e.Excerpt = excerpt(lead, 200)
 		posts = append(posts, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -304,8 +304,9 @@ func (p *Plugin) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Plugin) showPublished(w http.ResponseWriter, r *http.Request, kind, slug string) {
+	var lead, og string
 	it, err := scanItem(p.db.QueryRowContext(r.Context(),
-		`SELECT `+itemCols+` FROM content_items WHERE kind = ? AND slug = ? AND status = 'published'`, kind, slug))
+		`SELECT `+itemCols+`, lead, og_image FROM content_items WHERE kind = ? AND slug = ? AND status = 'published'`, kind, slug), &lead, &og)
 	if errors.Is(err, sql.ErrNoRows) {
 		p.notFound(w, r)
 		return
@@ -320,7 +321,7 @@ func (p *Plugin) showPublished(w http.ResponseWriter, r *http.Request, kind, slu
 		path, ogType = "/posts/"+it.Slug, "article"
 	}
 	p.render(w, r, http.StatusOK, tplSingle, pageData{
-		PageTitle: it.Title, Description: excerpt(body, 160), Path: path, OGType: ogType, OGImage: ogImage(body),
+		PageTitle: it.Title, Description: excerpt(lead, 160), Path: path, OGType: ogType, OGImage: og,
 		Item: &it, Body: template.HTML(body),
 	})
 }

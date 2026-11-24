@@ -48,7 +48,7 @@ func (p *Plugin) Manifest() sdk.Manifest {
 	}
 }
 
-func (p *Plugin) Init(_ context.Context, h sdk.Host) error {
+func (p *Plugin) Init(ctx context.Context, h sdk.Host) error {
 	var err error
 	if p.db, err = h.DB(); err != nil {
 		return err
@@ -57,8 +57,49 @@ func (p *Plugin) Init(_ context.Context, h sdk.Host) error {
 		return err
 	}
 	p.h = h
+	if err := p.backfillDerived(ctx); err != nil {
+		return err
+	}
 	if err := p.registerAPI(); err != nil {
 		return err
 	}
 	return p.registerPublic()
+}
+
+// backfillDerived fills lead/og_image for rows saved before they existed
+// (derived = 0). New and edited rows are always derived on save.
+func (p *Plugin) backfillDerived(ctx context.Context) error {
+	for {
+		rows, err := p.db.QueryContext(ctx, `SELECT id, body_html FROM content_items WHERE derived = 0 LIMIT 100`)
+		if err != nil {
+			return err
+		}
+		type row struct {
+			id   int64
+			html string
+		}
+		var batch []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.html); err != nil {
+				rows.Close()
+				return err
+			}
+			batch = append(batch, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		for _, r := range batch {
+			lead, og := derive(r.html)
+			if _, err := p.db.ExecContext(ctx, `UPDATE content_items SET lead=?, og_image=?, derived=1 WHERE id=? AND derived=0`, lead, og, r.id); err != nil {
+				return err
+			}
+		}
+	}
 }
