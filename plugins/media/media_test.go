@@ -503,3 +503,65 @@ func TestCleanFilename(t *testing.T) {
 		}
 	}
 }
+
+// Phones append further JPEGs (MPF: depth map, gain map, thumbnail) after the
+// main image, each with its own EXIF and GPS. The output must end at the first EOI.
+func TestStripJPEGDropsEverythingAfterEOI(t *testing.T) {
+	main := jpegWithMetadata(t, 1)
+	second := jpegWithMetadata(t, 1)
+	out, err := strip(kJPEG, append(append(append([]byte{}, main...), second...), "TRAILING-TEXT"...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(out, []byte(gpsMarker)) || bytes.Contains(out, []byte("TRAILING")) {
+		t.Fatal("data after the first EOI survived")
+	}
+	if !bytes.HasSuffix(out, []byte{0xFF, 0xD9}) || bytes.Count(out, []byte{0xFF, 0xD8}) != 1 {
+		t.Fatal("output must be exactly one image ending at EOI")
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(out)); err != nil {
+		t.Fatal(err)
+	}
+	// Appended data after a valid image, with no second image at all.
+	out, err = strip(kJPEG, append(append([]byte{}, main...), make([]byte, 1000)...))
+	if err != nil || !bytes.HasSuffix(out, []byte{0xFF, 0xD9}) {
+		t.Fatalf("zero padding: %v", err)
+	}
+}
+
+// Multi-scan (progressive) layout: tables and SOS between scans, restart
+// markers and stuffed FF 00 bytes inside entropy-coded data.
+func TestStripJPEGScanStructure(t *testing.T) {
+	seg := func(m byte, payload string) []byte {
+		s := []byte{0xFF, m, 0, byte(len(payload) + 2)}
+		return append(s, payload...)
+	}
+	cat := func(parts ...[]byte) []byte {
+		var out []byte
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
+	}
+	scan1 := []byte{0x12, 0xFF, 0x00, 0x34, 0xFF, 0xD0, 0x56, 0xFF, 0xFF, 0x00, 0x78}
+	in := cat([]byte{0xFF, 0xD8}, seg(0xE0, "JFIF\x00"), seg(0xFE, "comment"), seg(0xDB, "tables"),
+		seg(0xDA, "scan-header-1"), scan1, seg(0xC4, "more-tables"), seg(0xDA, "scan-header-2"), []byte{0x9A, 0xBC},
+		[]byte{0xFF, 0xD9}, []byte("GARBAGE"), seg(0xE1, "Exif\x00\x00"+gpsMarker))
+	want := cat([]byte{0xFF, 0xD8}, seg(0xE0, "JFIF\x00"), seg(0xDB, "tables"),
+		seg(0xDA, "scan-header-1"), scan1, seg(0xC4, "more-tables"), seg(0xDA, "scan-header-2"), []byte{0x9A, 0xBC},
+		[]byte{0xFF, 0xD9})
+	got, err := stripJPEG(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("got  %x\nwant %x", got, want)
+	}
+	// No EOI, or no scan at all: rejected.
+	if _, err := stripJPEG(in[:len(in)-len("GARBAGE")-len(seg(0xE1, "Exif\x00\x00"+gpsMarker))-2]); err == nil {
+		t.Fatal("JPEG without EOI accepted")
+	}
+	if _, err := stripJPEG(cat([]byte{0xFF, 0xD8}, seg(0xDB, "t"), []byte{0xFF, 0xD9})); err == nil {
+		t.Fatal("JPEG without a scan accepted")
+	}
+}

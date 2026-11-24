@@ -61,25 +61,33 @@ func stripJPEG(b []byte) ([]byte, error) {
 	if len(b) < 4 || b[0] != 0xFF || b[1] != 0xD8 {
 		return nil, errBadImage
 	}
-	out := make([]byte, 0, len(b))
-	out = append(out, 0xFF, 0xD8)
 	orientation := 0
-	var body []byte // segments to keep, in order
+	var body []byte // kept segments and entropy-coded data, in order
+	sawScan := false
 	i := 2
 	for {
+		// Here b[i] must start a marker. Anything after the EOI is never reached:
+		// phones append depth maps, thumbnails and other JPEGs (MPF) after the
+		// main image, each with its own EXIF/GPS, so the file must end at EOI.
 		if i+2 > len(b) || b[i] != 0xFF {
 			return nil, errBadImage
 		}
 		m := b[i+1]
-		if m == 0xFF { // fill byte
+		switch {
+		case m == 0xFF: // fill byte
 			i++
 			continue
-		}
-		if m == 0xD9 { // EOI before SOS: no image data
-			return nil, errBadImage
-		}
-		if m == 0x01 || (m >= 0xD0 && m <= 0xD7) || m == 0xD8 {
-			return nil, errBadImage // standalone markers are invalid in the header part
+		case m == 0xD9: // EOI
+			if !sawScan {
+				return nil, errBadImage
+			}
+			out := make([]byte, 0, len(body)+40)
+			out = append(out, 0xFF, 0xD8)
+			out = append(out, orientationSegment(orientation)...)
+			out = append(out, body...)
+			return append(out, 0xFF, 0xD9), nil
+		case m == 0x01 || m == 0x00 || (m >= 0xD0 && m <= 0xD8):
+			return nil, errBadImage // standalone/stuffing markers cannot start a segment
 		}
 		if i+4 > len(b) {
 			return nil, errBadImage
@@ -107,15 +115,34 @@ func stripJPEG(b []byte) ([]byte, error) {
 			body = append(body, seg...)
 		}
 		i += 2 + l
-		if m == 0xDA { // SOS: entropy-coded data follows; copy the rest verbatim
-			rest := b[i:]
-			if !bytes.Contains(rest, []byte{0xFF, 0xD9}) {
+		if m != 0xDA {
+			continue
+		}
+		// SOS: entropy-coded data follows, up to the next real marker. 0xFF is
+		// stuffed as FF 00 inside the data; RSTn markers belong to the data.
+		sawScan = true
+		j := i
+		for j < len(b) {
+			if b[j] != 0xFF {
+				j++
+				continue
+			}
+			if j+1 >= len(b) {
 				return nil, errBadImage
 			}
-			out = append(out, orientationSegment(orientation)...)
-			out = append(out, body...)
-			return append(out, rest...), nil
+			if n := b[j+1]; n == 0x00 || (n >= 0xD0 && n <= 0xD7) {
+				j += 2
+			} else if n == 0xFF {
+				j++
+			} else {
+				break
+			}
 		}
+		if j+1 >= len(b) {
+			return nil, errBadImage // data runs to the end of the file: no EOI
+		}
+		body = append(body, b[i:j]...)
+		i = j // next marker: another scan's tables/SOS (progressive), or EOI
 	}
 }
 
