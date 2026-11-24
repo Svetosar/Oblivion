@@ -6,6 +6,7 @@ import { ContentEditor, ContentList } from "./Content";
 import { MediaPage } from "./Media";
 import { UsersPage } from "./Users";
 import { Account } from "./Account";
+import { SettingsPage } from "./Settings";
 
 type State = "loading" | "login" | "setup" | { error: string } | Session;
 
@@ -79,6 +80,9 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     case "users":
       page = can(me, "users.manage") ? <UsersPage me={me} /> : <p className="error">Not allowed.</p>;
       break;
+    case "settings":
+      page = can(me, "content.settings") ? <SettingsPage /> : <p className="error">Not allowed.</p>;
+      break;
     case "account":
       page = <Account me={me} />;
       break;
@@ -110,6 +114,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           {link("/content?kind=page", "Pages")}
           {link("/media", "Media")}
           {can(me, "users.manage") && link("/users", "Users")}
+          {can(me, "content.settings") && link("/settings", "Settings")}
           {link("/account", "Account")}
           <a href="/" target="_blank" rel="noreferrer">
             View site

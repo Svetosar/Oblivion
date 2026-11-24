@@ -7,6 +7,7 @@ ENGINE  ?= podman
 .PHONY: build test vet check run image image-save admin
 # Build the admin SPA into internal/admin/dist (embedded into the binary).
 admin:
+	find internal/admin/dist -mindepth 1 ! -name .gitkeep -delete
 	cd admin && npm ci && npm run build
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o $(BIN) ./cmd/oblivion
