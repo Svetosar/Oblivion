@@ -30,6 +30,8 @@ type Plugin struct {
 	ipLimit   *limiter // per client network (IPv6 grouped by /64)
 	userLimit *limiter // per username, from any address: slows distributed guessing
 
+	stop context.CancelFunc // stops the session cleanup loop
+
 	mu           sync.Mutex
 	setupToken   string // non-empty while no user exists
 	setupExpires time.Time
@@ -70,7 +72,7 @@ func (p *Plugin) Init(ctx context.Context, h sdk.Host) error {
 		return err
 	}
 	p.h, p.rt = h, h.Runtime()
-	if p.dummyHash, err = hashPassword("dummy-password-for-timing-equalization"); err != nil {
+	if p.dummyHash, err = hashPassword(ctx, "dummy-password-for-timing-equalization"); err != nil {
 		return err
 	}
 	if err := p.registerRoutes(); err != nil {
@@ -79,6 +81,7 @@ func (p *Plugin) Init(ctx context.Context, h sdk.Host) error {
 	if err := h.Provide(sdk.ServiceIdentity, p); err != nil {
 		return err
 	}
+	p.startCleanup()
 	return p.maybeIssueSetupToken(ctx)
 }
 
@@ -99,3 +102,37 @@ func (p *Plugin) emit(ctx context.Context, hook string, payload map[string]any) 
 }
 
 func principalOf(r *http.Request) *sdk.Principal { return sdk.PrincipalFrom(r.Context()) }
+
+// startCleanup removes dead sessions now and then hourly, until Close.
+func (p *Plugin) startCleanup() {
+	ctx, cancel := context.WithCancel(context.Background())
+	p.stop = cancel
+	run := func() {
+		if n, err := p.cleanupSessions(ctx); err != nil && ctx.Err() == nil {
+			p.h.Log().Error("session cleanup", "err", err)
+		} else if n > 0 {
+			p.h.Log().Debug("expired sessions removed", "count", n)
+		}
+	}
+	run()
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				run()
+			}
+		}
+	}()
+}
+
+// Close stops background work (sdk.Closer).
+func (p *Plugin) Close(context.Context) error {
+	if p.stop != nil {
+		p.stop()
+	}
+	return nil
+}

@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -67,6 +68,19 @@ var (
 func (p *Plugin) internalErr(w http.ResponseWriter, what string, err error) {
 	p.h.Log().Error(what, "err", err)
 	writeErr(w, http.StatusInternalServerError, "internal error")
+}
+
+// hashErr answers for a failed hash/verify: overload -> 503, client gone -> nothing, else 500.
+func (p *Plugin) hashErr(w http.ResponseWriter, what string, err error) {
+	switch {
+	case errors.Is(err, errBusy):
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, http.StatusServiceUnavailable, "server is busy, try again in a moment")
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// the client is gone; there is nobody to answer
+	default:
+		p.internalErr(w, what, err)
+	}
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -208,9 +222,9 @@ func (p *Plugin) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	hash, err := hashPassword(in.Password)
+	hash, err := hashPassword(r.Context(), in.Password)
 	if err != nil {
-		p.internalErr(w, "hash password", err)
+		p.hashErr(w, "hash password", err)
 		return
 	}
 	// Atomic: succeeds only while the table is empty, so two racing setups
@@ -274,8 +288,8 @@ func (p *Plugin) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ok := false
 	if len(in.Password) <= maxPasswordLen {
-		if ok, err = verifyPassword(in.Password, hash); err != nil {
-			p.internalErr(w, "verify password", err)
+		if ok, err = verifyPassword(r.Context(), in.Password, hash); err != nil {
+			p.hashErr(w, "verify password", err)
 			return
 		}
 	}
@@ -363,8 +377,8 @@ func (p *Plugin) handlePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	ok := false
 	if len(in.Current) <= maxPasswordLen {
-		if ok, err = verifyPassword(in.Current, hash); err != nil {
-			p.internalErr(w, "verify password", err)
+		if ok, err = verifyPassword(r.Context(), in.Current, hash); err != nil {
+			p.hashErr(w, "verify password", err)
 			return
 		}
 	}
@@ -378,9 +392,9 @@ func (p *Plugin) handlePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	nh, err := hashPassword(in.New)
+	nh, err := hashPassword(r.Context(), in.New)
 	if err != nil {
-		p.internalErr(w, "hash password", err)
+		p.hashErr(w, "hash password", err)
 		return
 	}
 	if _, err := p.db.ExecContext(r.Context(), `UPDATE auth_users SET password_hash = ? WHERE id = ?`, nh, s.principal.UserID); err != nil {
@@ -464,9 +478,9 @@ func (p *Plugin) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	hash, err := hashPassword(in.Password)
+	hash, err := hashPassword(r.Context(), in.Password)
 	if err != nil {
-		p.internalErr(w, "hash password", err)
+		p.hashErr(w, "hash password", err)
 		return
 	}
 	now := p.now().Unix()
@@ -523,9 +537,9 @@ func (p *Plugin) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		h, err := hashPassword(*in.Password)
+		h, err := hashPassword(r.Context(), *in.Password)
 		if err != nil {
-			p.internalErr(w, "hash password", err)
+			p.hashErr(w, "hash password", err)
 			return
 		}
 		newHash = &h

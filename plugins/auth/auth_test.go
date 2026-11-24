@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -462,19 +463,142 @@ func TestLimiterMemoryIsHardBounded(t *testing.T) {
 }
 
 func TestPasswordHashing(t *testing.T) {
-	h, err := hashPassword("some long password")
+	h, err := hashPassword(context.Background(), "some long password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := verifyPassword("some long password", h); !ok || err != nil {
+	if ok, err := verifyPassword(context.Background(), "some long password", h); !ok || err != nil {
 		t.Fatalf("verify good: %v %v", ok, err)
 	}
-	if ok, _ := verifyPassword("other", h); ok {
+	if ok, _ := verifyPassword(context.Background(), "other", h); ok {
 		t.Fatal("wrong password verified")
 	}
 	// A tampered hash demanding absurd memory must be refused, not executed.
 	bomb := strings.Replace(h, "m=19456", "m=4000000", 1)
-	if _, err := verifyPassword("x", bomb); err == nil {
+	if _, err := verifyPassword(context.Background(), "x", bomb); err == nil {
 		t.Fatal("memory-bomb parameters accepted")
+	}
+}
+
+func TestHashQueueIsBoundedAndCancellable(t *testing.T) {
+	// Occupy every slot.
+	var releases []func()
+	for i := 0; i < hashSlots; i++ {
+		r, err := acquireHash(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		releases = append(releases, r)
+	}
+	// Fill the waiting room with cancellable waiters.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, maxHashWaiting)
+	for i := 0; i < maxHashWaiting; i++ {
+		go func() { _, err := acquireHash(ctx); done <- err }()
+	}
+	for hashWaiting.Load() != maxHashWaiting {
+		time.Sleep(time.Millisecond)
+	}
+	// One more is refused at once instead of queueing.
+	if _, err := acquireHash(context.Background()); !errors.Is(err, errBusy) {
+		t.Fatalf("overflow waiter: got %v, want errBusy", err)
+	}
+	// Cancelling releases all waiters without a slot being granted.
+	cancel()
+	for i := 0; i < maxHashWaiting; i++ {
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiter returned %v", err)
+		}
+	}
+	for _, r := range releases {
+		r()
+	}
+	if r, err := acquireHash(context.Background()); err != nil {
+		t.Fatalf("slots not released: %v", err)
+	} else {
+		r()
+	}
+}
+
+func TestLoginAnswers503WhenHashingIsSaturated(t *testing.T) {
+	e := newEnv(t)
+	e.setupAdmin()
+	var releases []func()
+	for i := 0; i < hashSlots; i++ {
+		r, _ := acquireHash(context.Background())
+		releases = append(releases, r)
+	}
+	defer func() {
+		for _, r := range releases {
+			r()
+		}
+	}()
+	stop := make(chan struct{})
+	for i := 0; i < maxHashWaiting; i++ {
+		go func() {
+			r, err := acquireHash(context.Background())
+			if err == nil {
+				<-stop
+				r()
+			}
+		}()
+	}
+	defer close(stop)
+	for hashWaiting.Load() != maxHashWaiting {
+		time.Sleep(time.Millisecond)
+	}
+	c := e.client("192.0.2.77")
+	w := c.do("POST", "/login", map[string]string{"username": "admin", "password": adminPW})
+	want(t, w, 503)
+	if w.Header().Get("Retry-After") == "" {
+		t.Fatal("503 without Retry-After")
+	}
+	// An overloaded server must not count that as a failed login attempt.
+	if d := e.p.ipLimit.check(ipKey("192.0.2.77")); d != 0 {
+		t.Fatalf("503 counted as a failure: lockout %v", d)
+	}
+}
+
+func countSessions(t *testing.T, e *env) int {
+	t.Helper()
+	var n int
+	if err := e.p.db.QueryRow(`SELECT COUNT(*) FROM auth_sessions`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestSessionsPerUserAreCapped(t *testing.T) {
+	e := newEnv(t)
+	e.setupAdmin() // session #1
+	var clients []*client
+	for i := 0; i < maxSessionsPerUser+4; i++ {
+		c := e.client(fmt.Sprintf("198.51.100.%d", 10+i))
+		want(t, c.login("admin", adminPW), 200)
+		clients = append(clients, c)
+		e.now = e.now.Add(time.Second) // distinct creation times
+	}
+	if n := countSessions(t, e); n != maxSessionsPerUser {
+		t.Fatalf("sessions = %d, want %d", n, maxSessionsPerUser)
+	}
+	want(t, clients[0].do("GET", "/me", nil), 401) // oldest evicted
+	want(t, clients[len(clients)-1].do("GET", "/me", nil), 200)
+}
+
+func TestExpiredSessionsAreCleanedUp(t *testing.T) {
+	e := newEnv(t)
+	e.setupAdmin()
+	c := e.client("198.51.100.1")
+	want(t, c.login("admin", adminPW), 200)
+	if countSessions(t, e) != 2 {
+		t.Fatal("setup precondition")
+	}
+	if n, err := e.p.cleanupSessions(context.Background()); err != nil || n != 0 {
+		t.Fatalf("live sessions must survive cleanup: n=%d err=%v", n, err)
+	}
+	e.now = e.now.Add(sessionIdle + time.Minute)
+	n, err := e.p.cleanupSessions(context.Background())
+	if err != nil || n != 2 || countSessions(t, e) != 0 {
+		t.Fatalf("idle sessions not removed: n=%d err=%v left=%d", n, err, countSessions(t, e))
 	}
 }

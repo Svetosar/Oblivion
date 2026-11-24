@@ -3,12 +3,14 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -27,22 +29,58 @@ const (
 	maxPasswordLen = 256 // bytes; bounds hashing input
 )
 
-var hashSem = make(chan struct{}, 2)
+// Password hashing is the most expensive thing the server does. At most
+// hashSlots run at once; up to maxHashWaiting more may wait; anything beyond
+// that is refused immediately (errBusy -> HTTP 503) instead of queueing without
+// bound. Waiting stops when the request is cancelled.
+const (
+	hashSlots      = 2
+	maxHashWaiting = 8
+)
 
-func hashPassword(pw string) (string, error) {
+var (
+	hashSem     = make(chan struct{}, hashSlots)
+	hashWaiting atomic.Int32
+	errBusy     = errors.New("auth: too many concurrent password checks")
+)
+
+func acquireHash(ctx context.Context) (release func(), err error) {
+	release = func() { <-hashSem }
+	select {
+	case hashSem <- struct{}{}:
+		return release, nil
+	default:
+	}
+	if hashWaiting.Add(1) > maxHashWaiting {
+		hashWaiting.Add(-1)
+		return nil, errBusy
+	}
+	defer hashWaiting.Add(-1)
+	select {
+	case hashSem <- struct{}{}:
+		return release, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func hashPassword(ctx context.Context, pw string) (string, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	hashSem <- struct{}{}
+	release, err := acquireHash(ctx)
+	if err != nil {
+		return "", err
+	}
 	key := argon2.IDKey([]byte(pw), salt, argonTime, argonMemKiB, argonThreads, argonKeyLen)
-	<-hashSem
+	release()
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, argonMemKiB, argonTime, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
 // verifyPassword checks pw against a PHC string in constant time.
-func verifyPassword(pw, enc string) (bool, error) {
+func verifyPassword(ctx context.Context, pw, enc string) (bool, error) {
 	parts := strings.Split(enc, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false, errors.New("unsupported hash format")
@@ -68,9 +106,12 @@ func verifyPassword(pw, enc string) (bool, error) {
 	if err != nil || len(want) < 16 {
 		return false, errors.New("bad hash")
 	}
-	hashSem <- struct{}{}
+	release, err := acquireHash(ctx)
+	if err != nil {
+		return false, err
+	}
 	got := argon2.IDKey([]byte(pw), salt, t, m, p, uint32(len(want)))
-	<-hashSem
+	release()
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 

@@ -23,7 +23,10 @@ const (
 	sessionAbsolute = 7 * 24 * time.Hour
 	sessionIdle     = 12 * time.Hour
 	touchEvery      = time.Minute
-	csrfHeader      = "X-CSRF-Token"
+	// A user may hold at most this many live sessions; logging in beyond that
+	// ends the oldest. Bounds table growth per account.
+	maxSessionsPerUser = 10
+	csrfHeader         = "X-CSRF-Token"
 )
 
 func (p *Plugin) cookieName() string {
@@ -71,7 +74,27 @@ func (p *Plugin) newSession(r *http.Request, userID int64) (string, string, time
 	_, err = p.db.ExecContext(r.Context(),
 		`INSERT INTO auth_sessions(token_hash, user_id, csrf, created_at, last_seen, expires_at) VALUES (?,?,?,?,?,?)`,
 		hashToken(tok), userID, csrf, now.Unix(), now.Unix(), exp.Unix())
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	// Keep only the newest maxSessionsPerUser sessions of this user.
+	_, err = p.db.ExecContext(r.Context(), `
+		DELETE FROM auth_sessions WHERE user_id = ?1 AND token_hash NOT IN (
+			SELECT token_hash FROM auth_sessions WHERE user_id = ?1
+			ORDER BY created_at DESC, rowid DESC LIMIT ?2)`, userID, maxSessionsPerUser)
 	return tok, csrf, exp, err
+}
+
+// cleanupSessions deletes sessions that can never be used again: past their
+// absolute lifetime or idle for longer than sessionIdle.
+func (p *Plugin) cleanupSessions(ctx context.Context) (int64, error) {
+	now := p.now()
+	res, err := p.db.ExecContext(ctx, `DELETE FROM auth_sessions WHERE expires_at <= ? OR last_seen <= ?`,
+		now.Unix(), now.Add(-sessionIdle).Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 type sessionInfo struct {
