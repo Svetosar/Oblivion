@@ -10,6 +10,8 @@ License: AGPL-3.0-or-later (SPDX header in every Go file).
 - The public site must be in Russian. Admin UI may be English or Russian.
 - Never state what you haven't verified (run it, test it, `go doc`, context7). If unverified say "не уверен / не проверял".
 - Criticize everything hard: user's ideas, your own plan/code, libraries. Don't just agree.
+- ALWAYS use the matching skills (design-critique, accessibility-review, seo-audit, security-discipline/security-review, performance-and-scaling, review-migration, testing-strategy, code-review) before doing reviews/design by hand.
+- A subagent on model haiku may help, sparingly (1-2 per task, focused prompt): limits are finite.
 - Talk to the user in Russian. Code, comments, commit messages in English.
 - No internet: library docs via context7 only. Server setup is handled by the user (no root, don't plan it).
 - Check the license of every dependency (Go and npm) is AGPL-compatible before adding it.
