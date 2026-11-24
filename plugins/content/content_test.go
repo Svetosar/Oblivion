@@ -856,3 +856,48 @@ func TestBackfillDerived(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDocumentCacheIsInvalidatedByEveryWrite(t *testing.T) {
+	e := newEnv(t)
+	e.setBase("https://example.com")
+	has := func(path, s string) bool { return strings.Contains(e.get(path, "").Body.String(), s) }
+
+	post := e.create(editor, "post", "Alpha", "published", map[string]any{"slug": "alpha"})
+	if !has("/sitemap.xml", "/posts/alpha") || !has("/feed.xml", "Alpha") {
+		t.Fatal("new post missing from sitemap/feed")
+	}
+	id := int64(post["id"].(float64))
+	url := fmt.Sprintf("/api/v1/content/items/%d", id)
+
+	want(t, e.do(editor, "PUT", url, map[string]any{"title": "Beta", "slug": "beta", "body_md": "x", "status": "published"}), 200)
+	if !has("/sitemap.xml", "/posts/beta") || has("/sitemap.xml", "/posts/alpha") || !has("/feed.xml", "Beta") {
+		t.Fatal("edit not visible immediately")
+	}
+	want(t, e.do(admin, "PUT", "/api/v1/content/settings", map[string]any{"site_title": "Новый заголовок", "base_url": "https://other.example", "content_lang": "ru"}), 200)
+	if !has("/sitemap.xml", "https://other.example/posts/beta") || !has("/feed.xml", "Новый заголовок") {
+		t.Fatal("settings change not visible immediately")
+	}
+	want(t, e.do(editor, "DELETE", url, nil), 204)
+	if has("/sitemap.xml", "/posts/beta") || has("/feed.xml", "Beta") {
+		t.Fatal("deleted post still listed")
+	}
+}
+
+func TestDocumentCacheBuildsOncePerVersion(t *testing.T) {
+	e := newEnv(t)
+	n := 0
+	build := func() ([]byte, error) { n++; return []byte("x"), nil }
+	for i := 0; i < 5; i++ {
+		if _, err := e.p.cachedDoc("k", build); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("built %d times, want 1", n)
+	}
+	e.p.version.Add(1)
+	_, _ = e.p.cachedDoc("k", build)
+	if n != 2 {
+		t.Fatalf("not rebuilt after a version bump (n=%d)", n)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"sync/atomic"
 	"time"
 
 	"oblivion/sdk"
@@ -31,6 +32,9 @@ type Plugin struct {
 	h   sdk.Host
 	now func() time.Time
 	st  settingsStore
+
+	version atomic.Int64 // bumped by every write that can change a public document
+	docs    docCache
 }
 
 func New() *Plugin { return &Plugin{now: time.Now} }

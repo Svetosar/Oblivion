@@ -130,6 +130,7 @@ func (p *Plugin) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		p.st.cached = &in
 	}
+	p.version.Add(1)
 	p.st.mu.Unlock()
 	if err != nil {
 		p.internalErr(w, "save settings", err)

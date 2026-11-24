@@ -269,6 +269,7 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 		pub = now
 	}
 	insert := func(slug string) (int64, error) {
+		defer p.version.Add(1)
 		res, err := p.db.ExecContext(r.Context(),
 			`INSERT INTO content_items(kind, slug, title, body_md, body_html, lead, og_image, derived, status, author_id, author_name, created_at, updated_at, published_at)
 			 VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?)`,
@@ -379,6 +380,7 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	_, err = p.db.ExecContext(r.Context(),
 		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, updated_at=?, published_at=? WHERE id=?`,
 		slug, in.Title, in.BodyMD, html, lead, og, in.Status, now, pub, id)
+	p.version.Add(1) // before answering, so the next request cannot see a stale document
 	if sdk.IsUniqueViolation(err) {
 		sdk.WriteError(w, http.StatusConflict, "slug already in use")
 		return
@@ -417,7 +419,9 @@ func (p *Plugin) handleDelete(w http.ResponseWriter, r *http.Request) {
 		sdk.WriteError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if _, err := p.db.ExecContext(r.Context(), `DELETE FROM content_items WHERE id = ?`, id); err != nil {
+	_, err = p.db.ExecContext(r.Context(), `DELETE FROM content_items WHERE id = ?`, id)
+	p.version.Add(1)
+	if err != nil {
 		p.internalErr(w, "delete item", err)
 		return
 	}

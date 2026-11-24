@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -139,37 +140,37 @@ func (p *Plugin) handleSitemap(w http.ResponseWriter, r *http.Request) {
 		p.notFound(w, r)
 		return
 	}
-	rows, err := p.db.QueryContext(r.Context(),
-		`SELECT kind, slug, updated_at FROM content_items WHERE status = 'published' ORDER BY id LIMIT 50000`)
+	out, err := p.cachedDoc("sitemap", func() ([]byte, error) {
+		rows, err := p.db.QueryContext(r.Context(),
+			`SELECT kind, slug, updated_at FROM content_items WHERE status = 'published' ORDER BY id LIMIT 50000`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		set := urlSet{URLs: []urlEntry{{Loc: st.BaseURL + "/"}}}
+		for rows.Next() {
+			var kind, slug string
+			var upd int64
+			if err := rows.Scan(&kind, &slug, &upd); err != nil {
+				return nil, err
+			}
+			path := "/" + slug
+			if kind == "post" {
+				path = "/posts/" + slug
+			}
+			set.URLs = append(set.URLs, urlEntry{Loc: st.BaseURL + path, LastMod: time.Unix(upd, 0).UTC().Format("2006-01-02")})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		out, err := xml.MarshalIndent(set, "", "  ")
+		return append([]byte(xml.Header), out...), err
+	})
 	if err != nil {
 		p.internalErr(w, "sitemap", err)
 		return
 	}
-	defer rows.Close()
-	set := urlSet{URLs: []urlEntry{{Loc: st.BaseURL + "/"}}}
-	for rows.Next() {
-		var kind, slug string
-		var upd int64
-		if err := rows.Scan(&kind, &slug, &upd); err != nil {
-			p.internalErr(w, "sitemap", err)
-			return
-		}
-		path := "/" + slug
-		if kind == "post" {
-			path = "/posts/" + slug
-		}
-		set.URLs = append(set.URLs, urlEntry{Loc: st.BaseURL + path, LastMod: time.Unix(upd, 0).UTC().Format("2006-01-02")})
-	}
-	if err := rows.Err(); err != nil {
-		p.internalErr(w, "sitemap", err)
-		return
-	}
-	out, err := xml.MarshalIndent(set, "", "  ")
-	if err != nil {
-		p.internalErr(w, "sitemap", err)
-		return
-	}
-	serveBytes(w, r, "application/xml; charset=utf-8", append([]byte(xml.Header), out...), "")
+	serveBytes(w, r, "application/xml; charset=utf-8", out, "")
 }
 
 type rssItem struct {
@@ -215,54 +216,85 @@ func (p *Plugin) handleFeed(w http.ResponseWriter, r *http.Request) {
 		p.notFound(w, r)
 		return
 	}
-	rows, err := p.db.QueryContext(r.Context(),
-		`SELECT slug, title, body_html, lead, published_at FROM content_items WHERE kind = 'post' AND status = 'published'
-		 ORDER BY published_at DESC, id DESC LIMIT 20`)
-	if err != nil {
-		p.internalErr(w, "feed", err)
-		return
-	}
-	defer rows.Close()
-	ui := langRU
-	if st.ContentLang == "en" {
-		ui = langEN
-	}
-	title := st.SiteTitle
-	if title == "" {
-		title = ui.DefaultTitle
-	}
-	ch := rssChannel{Title: title, Link: st.BaseURL + "/", Description: st.SiteDescription, Language: st.ContentLang,
-		AtomLink: atomLink{Href: st.BaseURL + "/feed.xml", Rel: "self", Type: "application/rss+xml"}}
-	if ch.Description == "" {
-		ch.Description = title
-	}
-	var newest int64
-	for rows.Next() {
-		var slug, t, body, lead string
-		var pub int64
-		if err := rows.Scan(&slug, &t, &body, &lead, &pub); err != nil {
-			p.internalErr(w, "feed", err)
-			return
+	out, err := p.cachedDoc("feed", func() ([]byte, error) {
+		rows, err := p.db.QueryContext(r.Context(),
+			`SELECT slug, title, body_html, lead, published_at FROM content_items WHERE kind = 'post' AND status = 'published'
+			 ORDER BY published_at DESC, id DESC LIMIT 20`)
+		if err != nil {
+			return nil, err
 		}
-		body = p.finalHTML(r.Context(), body)
-		link := st.BaseURL + "/posts/" + slug
-		ch.Items = append(ch.Items, rssItem{Title: t, Link: link, GUID: link, PubDate: time.Unix(pub, 0).UTC().Format(time.RFC1123Z),
-			Description: excerpt(lead, 300), Content: absolutize(body, st.BaseURL)})
-		newest = max(newest, pub)
-	}
-	if err := rows.Err(); err != nil {
-		p.internalErr(w, "feed", err)
-		return
-	}
-	if newest > 0 {
-		ch.LastBuildDate = time.Unix(newest, 0).UTC().Format(time.RFC1123Z)
-	}
-	out, err := xml.MarshalIndent(rssDoc{Version: "2.0", Channel: ch}, "", "  ")
+		defer rows.Close()
+		ui := langRU
+		if st.ContentLang == "en" {
+			ui = langEN
+		}
+		title := st.SiteTitle
+		if title == "" {
+			title = ui.DefaultTitle
+		}
+		ch := rssChannel{Title: title, Link: st.BaseURL + "/", Description: st.SiteDescription, Language: st.ContentLang,
+			AtomLink: atomLink{Href: st.BaseURL + "/feed.xml", Rel: "self", Type: "application/rss+xml"}}
+		if ch.Description == "" {
+			ch.Description = title
+		}
+		var newest int64
+		for rows.Next() {
+			var slug, t, body, lead string
+			var pub int64
+			if err := rows.Scan(&slug, &t, &body, &lead, &pub); err != nil {
+				return nil, err
+			}
+			body = p.finalHTML(r.Context(), body)
+			link := st.BaseURL + "/posts/" + slug
+			ch.Items = append(ch.Items, rssItem{Title: t, Link: link, GUID: link, PubDate: time.Unix(pub, 0).UTC().Format(time.RFC1123Z),
+				Description: excerpt(lead, 300), Content: absolutize(body, st.BaseURL)})
+			newest = max(newest, pub)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if newest > 0 {
+			ch.LastBuildDate = time.Unix(newest, 0).UTC().Format(time.RFC1123Z)
+		}
+		out, err := xml.MarshalIndent(rssDoc{Version: "2.0", Channel: ch}, "", "  ")
+		return append([]byte(xml.Header), out...), err
+	})
 	if err != nil {
 		p.internalErr(w, "feed", err)
 		return
 	}
-	serveBytes(w, r, "application/rss+xml; charset=utf-8", append([]byte(xml.Header), out...), "")
+	serveBytes(w, r, "application/rss+xml; charset=utf-8", out, "")
+}
+
+// docCache keeps rendered sitemap/feed documents. Any write to content or
+// settings bumps Plugin.version, which invalidates everything at once.
+type docCache struct {
+	mu  sync.Mutex
+	ver int64
+	m   map[string][]byte
+}
+
+func (p *Plugin) cachedDoc(key string, build func() ([]byte, error)) ([]byte, error) {
+	v := p.version.Load() // read before building: a write during the build leaves the entry stale
+	p.docs.mu.Lock()
+	if b, ok := p.docs.m[key]; ok && p.docs.ver == v {
+		p.docs.mu.Unlock()
+		return b, nil
+	}
+	p.docs.mu.Unlock()
+	b, err := build()
+	if err != nil {
+		return nil, err
+	}
+	p.docs.mu.Lock()
+	if v >= p.docs.ver {
+		if v > p.docs.ver || p.docs.m == nil {
+			p.docs.ver, p.docs.m = v, map[string][]byte{}
+		}
+		p.docs.m[key] = b
+	}
+	p.docs.mu.Unlock()
+	return b, nil
 }
 
 // ---- conditional responses --------------------------------------------------
