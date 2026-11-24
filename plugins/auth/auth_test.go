@@ -5,6 +5,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -479,6 +480,19 @@ func TestPasswordHashing(t *testing.T) {
 	bomb := strings.Replace(h, "m=19456", "m=4000000", 1)
 	if _, err := verifyPassword(context.Background(), "x", bomb); err == nil {
 		t.Fatal("memory-bomb parameters accepted")
+	}
+	// 64 MiB is the ceiling; a key length outside 16..64 is refused too.
+	for name, bad := range map[string]string{
+		"m just over cap": strings.Replace(h, "m=19456", "m=65537", 1),
+		"huge key":        h[:strings.LastIndex(h, "$")+1] + base64.RawStdEncoding.EncodeToString(make([]byte, 65)),
+		"short key":       h[:strings.LastIndex(h, "$")+1] + base64.RawStdEncoding.EncodeToString(make([]byte, 15)),
+	} {
+		if _, err := verifyPassword(context.Background(), "x", bad); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := verifyPassword(context.Background(), "x", strings.Replace(h, "m=19456", "m=65536", 1)); err != nil {
+		t.Errorf("m at the cap must still verify: %v", err)
 	}
 }
 

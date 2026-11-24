@@ -79,6 +79,19 @@ func TestGzipLeavesThingsAlone(t *testing.T) {
 			w.Header().Set("Content-Type", "text/html")
 			_, _ = io.WriteString(w, big)
 		}},
+		{"gzip;q=0.0", "gzip;q=0.0", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = io.WriteString(w, big)
+		}},
+		{"gzip;q=0.000", "gzip; q=0.000", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = io.WriteString(w, big)
+		}},
+		{"no-store (per-user, BREACH)", "gzip", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = io.WriteString(w, big)
+		}},
 		{"image", "gzip", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "image/png")
 			_, _ = io.WriteString(w, big)
@@ -154,5 +167,18 @@ func TestGzipExposesUnwrap(t *testing.T) {
 	Gzip(http.HandlerFunc(h)).ServeHTTP(rec, r)
 	if inner != http.ResponseWriter(rec) {
 		t.Fatal("Unwrap must return the underlying writer")
+	}
+}
+
+func TestGzipQValues(t *testing.T) {
+	for in, want := range map[string]bool{
+		"gzip": true, "gzip;q=1": true, "gzip;q=0.5": true, "gzip; q=0.001": true, "GZIP": true,
+		"gzip;q=0": false, "gzip;q=0.0": false, "gzip;q=0.000": false, "gzip ; q = 0": false,
+		"br, gzip;q=0": false, "br, gzip;q=0.8": true, "deflate": false, "": false, "*": false,
+		"gzip;q=banana": true,
+	} {
+		if got := acceptsGzip(in); got != want {
+			t.Errorf("acceptsGzip(%q) = %v, want %v", in, got, want)
+		}
 	}
 }

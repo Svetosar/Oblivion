@@ -73,6 +73,13 @@ func (p *Plugin) settings(ctx context.Context) settings {
 	if c != nil {
 		return *c
 	}
+	// Load under the write lock, so a concurrent PUT cannot be overwritten by a
+	// stale read that started before it.
+	p.st.mu.Lock()
+	defer p.st.mu.Unlock()
+	if p.st.cached != nil {
+		return *p.st.cached
+	}
 	s := settings{ContentLang: "ru"}
 	if b, ok, err := p.kv.Get(ctx, settingsKey); err == nil && ok {
 		if json.Unmarshal(b, &s) != nil || s.normalize() != "" {
@@ -82,9 +89,7 @@ func (p *Plugin) settings(ctx context.Context) settings {
 		p.h.Log().Error("load settings", "err", err)
 		return s // do not cache a failure
 	}
-	p.st.mu.Lock()
 	p.st.cached = &s
-	p.st.mu.Unlock()
 	return s
 }
 
@@ -118,12 +123,17 @@ func (p *Plugin) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, _ := json.Marshal(in)
-	if err := p.kv.Set(r.Context(), settingsKey, b); err != nil {
+	// One lock across the write and the cache swap: two concurrent PUTs must
+	// leave the cache equal to what the store holds.
+	p.st.mu.Lock()
+	err := p.kv.Set(r.Context(), settingsKey, b)
+	if err == nil {
+		p.st.cached = &in
+	}
+	p.st.mu.Unlock()
+	if err != nil {
 		p.internalErr(w, "save settings", err)
 		return
 	}
-	p.st.mu.Lock()
-	p.st.cached = &in
-	p.st.mu.Unlock()
 	sdk.WriteJSON(w, http.StatusOK, in)
 }

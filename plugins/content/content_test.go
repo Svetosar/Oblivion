@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -751,5 +752,31 @@ func TestFavicon(t *testing.T) {
 	}
 	if !strings.Contains(e.get("/", "").Body.String(), `<link rel="icon" href="/theme/favicon.svg"`) {
 		t.Fatal("pages do not link the favicon")
+	}
+}
+
+// Concurrent PUTs must leave the in-memory cache equal to the stored value.
+func TestSettingsConcurrentPutsStayConsistent(t *testing.T) {
+	e := newEnv(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.do(admin, "PUT", "/api/v1/content/settings", map[string]any{"site_title": fmt.Sprintf("T%d", i), "content_lang": "ru"})
+		}()
+	}
+	wg.Wait()
+	cached := e.p.settings(context.Background()).SiteTitle
+	raw, ok, err := e.p.kv.Get(context.Background(), settingsKey)
+	if err != nil || !ok {
+		t.Fatal("settings not stored", err)
+	}
+	var stored settings
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if cached != stored.SiteTitle {
+		t.Fatalf("cache %q != store %q", cached, stored.SiteTitle)
 	}
 }

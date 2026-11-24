@@ -95,7 +95,7 @@ func verifyPassword(ctx context.Context, pw, enc string) (bool, error) {
 		return false, errors.New("bad argon2 params")
 	}
 	// Bound parameters read from the database so a tampered row cannot trigger a memory bomb.
-	if m == 0 || m > 256*1024 || t == 0 || t > 10 || p == 0 || p > 4 {
+	if m == 0 || m > 64*1024 || t == 0 || t > 10 || p == 0 || p > 4 {
 		return false, errors.New("argon2 params out of range")
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
@@ -103,7 +103,7 @@ func verifyPassword(ctx context.Context, pw, enc string) (bool, error) {
 		return false, errors.New("bad salt")
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) < 16 {
+	if err != nil || len(want) < 16 || len(want) > 64 {
 		return false, errors.New("bad hash")
 	}
 	release, err := acquireHash(ctx)

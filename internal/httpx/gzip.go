@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -16,6 +17,9 @@ var gzPool = sync.Pool{New: func() any { return gzip.NewWriter(nil) }}
 // clients that accept gzip. Images and other already-compressed types, tiny
 // bodies, ranges, 204/304 and responses that are already encoded are left alone.
 // A strong ETag becomes weak when compressed, as the bytes differ.
+// Responses marked Cache-Control: no-store are never compressed: those are the
+// per-user ones (every API reply, with session-bound CSRF tokens), and
+// compressing a secret next to attacker-influenced text enables BREACH.
 func Gzip(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
@@ -34,9 +38,27 @@ func acceptsGzip(h string) bool {
 		if !strings.EqualFold(strings.TrimSpace(name), "gzip") {
 			continue
 		}
-		return !strings.Contains(strings.ReplaceAll(params, " ", ""), "q=0") || strings.Contains(strings.ReplaceAll(params, " ", ""), "q=0.")
+		return qValue(params) > 0
 	}
 	return false
+}
+
+// qValue reads the q parameter of one Accept-Encoding entry (default 1).
+// Anything unparsable counts as 1, as most servers do; q=0, 0.0, 0.000 mean
+// "not acceptable".
+func qValue(params string) float64 {
+	for _, p := range strings.Split(params, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil || q < 0 || q > 1 {
+			return 1
+		}
+		return q
+	}
+	return 1
 }
 
 func compressible(ct string) bool {
@@ -74,7 +96,8 @@ func (g *gzipWriter) decide(status int) {
 		h.Add("Vary", "Accept-Encoding") // the variant depends on the request even if we skip it below
 	}
 	if status < 200 || status == http.StatusNoContent || status == http.StatusNotModified || status == http.StatusPartialContent ||
-		h.Get("Content-Encoding") != "" || h.Get("Content-Range") != "" || ct == "" || !compressible(ct) {
+		h.Get("Content-Encoding") != "" || h.Get("Content-Range") != "" || ct == "" || !compressible(ct) ||
+		strings.Contains(strings.ToLower(h.Get("Cache-Control")), "no-store") {
 		return
 	}
 	if cl := h.Get("Content-Length"); cl != "" {
