@@ -11,20 +11,30 @@ export function UsersPage({ me }: { me: Me }) {
   }, []);
   useEffect(load, [load]);
 
-  const act = async (fn: () => Promise<unknown>, ok: string) => {
+  // act runs an API call, shows the outcome, and reports whether it succeeded.
+  const act = async (fn: () => Promise<unknown>, ok: string): Promise<boolean> => {
     setMsg(null);
     try {
       await fn();
       setMsg({ ok: true, text: ok });
       load();
+      return true;
     } catch (e) {
       setMsg({ ok: false, text: errMsg(e) });
+      return false;
     }
   };
 
-  const resetPassword = (u: User) => {
-    const pw = prompt(`New password for ${u.username} (at least 12 characters). Their sessions will be ended.`);
-    if (pw) void act(() => api("PATCH", `/auth/users/${u.id}`, { password: pw }), "Password reset.");
+  const [resetFor, setResetFor] = useState<number | null>(null);
+  const [resetPw, setResetPw] = useState("");
+  const submitReset = (e: FormEvent, u: User) => {
+    e.preventDefault();
+    void act(() => api("PATCH", `/auth/users/${u.id}`, { password: resetPw }), "Password reset. That user's sessions were ended.").then((done) => {
+      if (done) {
+        setResetFor(null);
+        setResetPw("");
+      }
+    });
   };
 
   return (
@@ -62,7 +72,15 @@ export function UsersPage({ me }: { me: Me }) {
                 <td>{fmtDate(u.created_at)}</td>
                 <td className="actions">
                   <button onClick={() => void act(() => api("PATCH", `/auth/users/${u.id}`, { disabled: !u.disabled }), u.disabled ? "User enabled." : "User disabled.")}>{u.disabled ? "Enable" : "Disable"}</button>
-                  <button onClick={() => resetPassword(u)}>Reset password</button>
+                  {resetFor === u.id ? (
+                    <form className="inline-reset" onSubmit={(e) => submitReset(e, u)}>
+                      <input type="password" value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="New password (12+ characters)" aria-label={`New password for ${u.username}`} minLength={12} required autoComplete="new-password" autoFocus />
+                      <button className="primary">Set</button>
+                      <button type="button" onClick={() => { setResetFor(null); setResetPw(""); }}>Cancel</button>
+                    </form>
+                  ) : (
+                    <button onClick={() => { setResetFor(u.id); setResetPw(""); }}>Reset password</button>
+                  )}
                   <button className="danger" onClick={() => confirm(`Delete ${u.username}?`) && void act(() => api("DELETE", `/auth/users/${u.id}`), "User deleted.")}>
                     Delete
                   </button>

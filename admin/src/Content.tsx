@@ -54,7 +54,7 @@ export function ContentList({ me, query }: { me: Me; query: string }) {
   );
 }
 
-export function ContentEditor({ me, idOrNew, query }: { me: Me; idOrNew: string; query: string }) {
+export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew: string; query: string; onKind: (k: "post" | "page") => void }) {
   const isNew = idOrNew === "new";
   const [kind, setKind] = useState<"post" | "page">(new URLSearchParams(query).get("kind") === "page" ? "page" : "post");
   const [title, setTitle] = useState("");
@@ -65,7 +65,12 @@ export function ContentEditor({ me, idOrNew, query }: { me: Me; idOrNew: string;
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [preview, setPreview] = useState("");
   const [picker, setPicker] = useState(false);
+  const [tab, setTab] = useState<"write" | "preview">("write"); // small screens show one pane at a time
   const ta = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    onKind(kind);
+  }, [kind, onKind]);
 
   useEffect(() => {
     if (isNew) return;
@@ -149,14 +154,22 @@ export function ContentEditor({ me, idOrNew, query }: { me: Me; idOrNew: string;
         <input value={slug} onChange={(e) => setSlug(e.target.value)} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-post" />
       </label>
       <div className="row">
-        <span>Markdown</span>
+        <div className="tabs" role="tablist" aria-label="Editor view">
+          <button type="button" role="tab" aria-selected={tab === "write"} className={tab === "write" ? "on" : undefined} onClick={() => setTab("write")}>
+            Write
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "preview"} className={tab === "preview" ? "on" : undefined} onClick={() => setTab("preview")}>
+            Preview
+          </button>
+        </div>
+        <span className="desktop-only">Markdown</span>
         <button type="button" onClick={() => setPicker(!picker)}>
           Insert image
         </button>
       </div>
       {picker && <MediaPicker onPick={insert} />}
-      <div className="editor">
-        <textarea ref={ta} value={body} onChange={(e) => setBody(e.target.value)} rows={22} spellCheck />
+      <div className={"editor tab-" + tab}>
+        <textarea ref={ta} value={body} onChange={(e) => setBody(e.target.value)} rows={22} spellCheck aria-label="Markdown" />
         {/* The HTML below was produced and sanitized by the server (goldmark + bluemonday). */}
         <div className="preview body" dangerouslySetInnerHTML={{ __html: preview }} />
       </div>

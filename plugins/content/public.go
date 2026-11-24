@@ -73,6 +73,10 @@ func (p *Plugin) registerPublic() error {
 		{"GET /{slug}", p.handlePage},
 		{"GET /{slug}/", redirectNoSlash},
 		{"GET /theme/style.css", handleCSS},
+		{"GET /theme/favicon.svg", handleFavicon},
+		{"GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/theme/favicon.svg", http.StatusMovedPermanently)
+		}},
 		{"GET /robots.txt", p.handleRobots},
 		{"GET /sitemap.xml", p.handleSitemap},
 		{"GET /feed.xml", p.handleFeed},
@@ -95,6 +99,17 @@ func redirectNoSlash(w http.ResponseWriter, r *http.Request) {
 		target += "?" + r.URL.RawQuery
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+func handleFavicon(w http.ResponseWriter, _ *http.Request) {
+	b, err := themeFS.ReadFile("theme/favicon.svg")
+	if err != nil {
+		http.NotFound(w, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(b)
 }
 
 func handleCSS(w http.ResponseWriter, _ *http.Request) {

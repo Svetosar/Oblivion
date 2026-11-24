@@ -731,3 +731,18 @@ func TestExcerpt(t *testing.T) {
 		t.Errorf("long excerpt: %q", long)
 	}
 }
+
+func TestFavicon(t *testing.T) {
+	e := newEnv(t)
+	w := e.get("/theme/favicon.svg", "")
+	want(t, w, 200)
+	if w.Header().Get("Content-Type") != "image/svg+xml" || !strings.HasPrefix(w.Body.String(), "<svg") {
+		t.Fatalf("favicon: %v %q", w.Header(), w.Body)
+	}
+	if r := e.get("/favicon.ico", ""); r.Code != 301 || r.Header().Get("Location") != "/theme/favicon.svg" {
+		t.Fatalf("/favicon.ico: %d %q", r.Code, r.Header().Get("Location"))
+	}
+	if !strings.Contains(e.get("/", "").Body.String(), `<link rel="icon" href="/theme/favicon.svg"`) {
+		t.Fatal("pages do not link the favicon")
+	}
+}

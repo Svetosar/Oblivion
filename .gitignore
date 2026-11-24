@@ -11,3 +11,7 @@ web/admin/dist/
 admin/node_modules/
 internal/admin/dist/*
 !internal/admin/dist/.gitkeep
+
+# compiled test binaries (go test -c / -cpuprofile)
+*.test
+*.out

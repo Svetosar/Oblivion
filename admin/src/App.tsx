@@ -57,6 +57,9 @@ export function App() {
 function Shell({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const hash = useHash();
   const me = session.user;
+  // The editor of an existing item learns its kind only after loading; it reports it
+  // so the right menu entry can be highlighted.
+  const [editorKind, setEditorKind] = useState<"post" | "page" | null>(null);
   const [path] = hash.split("?");
   const parts = path.split("/").filter(Boolean);
 
@@ -72,7 +75,7 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   let page;
   switch (parts[0]) {
     case "content":
-      page = parts[1] ? <ContentEditor key={hash} me={me} idOrNew={parts[1]} query={hash.split("?")[1] ?? ""} /> : <ContentList me={me} query={hash.split("?")[1] ?? ""} />;
+      page = parts[1] ? <ContentEditor key={hash} me={me} idOrNew={parts[1]} query={hash.split("?")[1] ?? ""} onKind={setEditorKind} /> : <ContentList me={me} query={hash.split("?")[1] ?? ""} />;
       break;
     case "media":
       page = <MediaPage me={me} />;
@@ -98,8 +101,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       );
   }
 
-  const link = (to: string, label: string) => (
-    <a href={"#" + to} className={parts[0] === to.split("/")[1] ? "active" : ""}>
+  // Which menu entry is current: content entries depend on the kind (query or loaded item).
+  const kindNow = parts[0] === "content" ? (parts[1] && parts[1] !== "new" ? editorKind : new URLSearchParams(hash.split("?")[1] ?? "").get("kind") === "page" ? "page" : "post") : null;
+  const link = (to: string, label: string, active: boolean) => (
+    <a href={"#" + to} className={active ? "active" : undefined} aria-current={active ? "page" : undefined}>
       {label}
     </a>
   );
@@ -110,12 +115,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           Admin
         </a>
         <nav>
-          {link("/content?kind=post", "Posts")}
-          {link("/content?kind=page", "Pages")}
-          {link("/media", "Media")}
-          {can(me, "users.manage") && link("/users", "Users")}
-          {can(me, "content.settings") && link("/settings", "Settings")}
-          {link("/account", "Account")}
+          {link("/content?kind=post", "Posts", kindNow === "post")}
+          {link("/content?kind=page", "Pages", kindNow === "page")}
+          {link("/media", "Media", parts[0] === "media")}
+          {can(me, "users.manage") && link("/users", "Users", parts[0] === "users")}
+          {can(me, "content.settings") && link("/settings", "Settings", parts[0] === "settings")}
+          {link("/account", "Account", parts[0] === "account")}
           <a href="/" target="_blank" rel="noreferrer">
             View site
           </a>
