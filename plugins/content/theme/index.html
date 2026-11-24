@@ -6,6 +6,6 @@
 <time datetime="{{date .PublishedAt}}">{{date .PublishedAt}}</time>
 {{with .Excerpt}}<p>{{.}}</p>{{end}}
 </article>
-{{else}}<p>{{$.UI.NothingYet}}</p>{{end}}
-<nav class="pager">{{if .Newer}}<a href="{{.Newer}}" rel="prev">{{.UI.Newer}}</a>{{end}}{{if .Older}}<a href="{{.Older}}" rel="next">{{.UI.Older}}</a>{{end}}</nav>
+{{else}}<p{{$.UIAttr}}>{{$.UI.NothingYet}}</p>{{end}}
+<nav class="pager"{{.UIAttr}}>{{if .Newer}}<a href="{{.Newer}}" rel="prev">{{.UI.Newer}}</a>{{end}}{{if .Older}}<a href="{{.Older}}" rel="next">{{.UI.Older}}</a>{{end}}</nav>
 {{end}}

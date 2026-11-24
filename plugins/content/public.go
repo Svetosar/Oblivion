@@ -44,6 +44,7 @@ type pageData struct {
 	UI                         *tr
 	SiteTitle, SiteDescription string
 	ContentLang                string
+	UIAttr                     template.HTMLAttr // ` lang="xx"` when the UI language differs from the content language
 	Head                       head
 	Nav                        []navItem
 }
@@ -134,6 +135,9 @@ func (p *Plugin) render(w http.ResponseWriter, r *http.Request, code int, t *tem
 		return
 	}
 	d.UI, d.Nav, d.ContentLang = ui, nav, st.ContentLang
+	if ui.Lang != st.ContentLang {
+		d.UIAttr = template.HTMLAttr(` lang="` + ui.Lang + `"`)
+	}
 	d.SiteTitle, d.SiteDescription = st.SiteTitle, st.SiteDescription
 	if d.SiteTitle == "" {
 		d.SiteTitle = ui.DefaultTitle

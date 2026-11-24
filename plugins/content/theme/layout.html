@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="{{.UI.Lang}}">
+<html lang="{{.ContentLang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -20,7 +20,7 @@
 <link rel="stylesheet" href="/theme/style.css">
 </head>
 <body>
-<a class="skip" href="#main">{{.UI.SkipToContent}}</a>
+<a class="skip" href="#main"{{.UIAttr}}>{{.UI.SkipToContent}}</a>
 <header>
 <a class="site" href="/">{{.SiteTitle}}</a>
 <nav>{{range .Nav}}<a href="/{{.Slug}}">{{.Title}}</a>{{end}}</nav>

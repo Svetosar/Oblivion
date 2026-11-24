@@ -611,8 +611,15 @@ func TestLanguageNegotiation(t *testing.T) {
 	} {
 		w := e.get("/posts/p", tc.header)
 		b := w.Body.String()
-		if !strings.Contains(b, `<html lang="`+tc.lang+`">`) || !strings.Contains(b, tc.marker) {
+		if !strings.Contains(b, tc.marker) {
 			t.Errorf("Accept-Language %q: want UI %s", tc.header, tc.lang)
+		}
+		// <html lang> is the content language; chrome carries its own lang only when it differs.
+		if !strings.Contains(b, `<html lang="ru">`) {
+			t.Errorf("Accept-Language %q: <html lang> must be the content language", tc.header)
+		}
+		if got := strings.Contains(b, `class="skip" href="#main" lang="en"`); got != (tc.lang == "en") {
+			t.Errorf("Accept-Language %q: chrome lang attribute present=%v, UI %s", tc.header, got, tc.lang)
 		}
 		if !strings.Contains(b, `<article lang="ru">`) {
 			t.Errorf("Accept-Language %q: the article itself must stay in the content language", tc.header)

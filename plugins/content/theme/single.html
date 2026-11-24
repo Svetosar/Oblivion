@@ -1,7 +1,7 @@
 {{define "main"}}
 <article lang="{{.ContentLang}}">
 <h1>{{.Item.Title}}</h1>
-{{if eq .Item.Kind "post"}}<p class="meta"><time datetime="{{date .Item.PublishedAt}}">{{date .Item.PublishedAt}}</time> · {{.UI.By}}: {{.Item.AuthorName}}</p>{{end}}
+{{if eq .Item.Kind "post"}}<p class="meta"{{.UIAttr}}><time datetime="{{date .Item.PublishedAt}}">{{date .Item.PublishedAt}}</time> · {{.UI.By}}: {{.Item.AuthorName}}</p>{{end}}
 <div class="body">{{.Body}}</div>
 </article>
 {{end}}
