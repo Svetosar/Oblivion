@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-ARG GO_VERSION=1.27
-FROM docker.io/library/node:22 AS admin
+# Base images are pinned by digest (supply chain). To update: pull the tag, read
+# `podman image inspect <img> --format '{{index .RepoDigests 0}}'`, paste here.
+FROM docker.io/library/node:22@sha256:1a81f3fd55b56c8fe964333a05bd1f257450b914a1196eb8bd577374900a1f70 AS admin
 WORKDIR /src/admin
 COPY admin/package.json admin/package-lock.json ./
 RUN npm ci
@@ -8,7 +9,7 @@ COPY admin/ ./
 # vite writes to ../internal/admin/dist
 RUN npm run build
 
-FROM docker.io/library/golang:${GO_VERSION} AS build
+FROM docker.io/library/golang:1.27@sha256:87f49b77a7b6a99ad7dc656be010ae453322459dd2ed902ac177649a302bc101 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

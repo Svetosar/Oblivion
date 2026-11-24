@@ -18,6 +18,6 @@ check: vet test
 run: admin build
 	OBLIVION_SECURE_COOKIE=false $(BIN)
 image:
-	$(ENGINE) build -f deploy/Containerfile -t $(IMAGE) .
+	$(ENGINE) build --format docker -f deploy/Containerfile -t $(IMAGE) .
 image-save: image
 	mkdir -p dist && $(ENGINE) save $(IMAGE) | gzip > dist/oblivion-image.tar.gz
