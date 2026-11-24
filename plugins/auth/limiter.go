@@ -52,7 +52,10 @@ func (l *limiter) check(key string) time.Duration {
 func (l *limiter) fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := l.now()
+	l.failLocked(key, l.now())
+}
+
+func (l *limiter) failLocked(key string, now time.Time) {
 	e := l.entries[key]
 	if e == nil || now.Sub(e.last) > l.window {
 		if len(l.entries) >= l.max {
@@ -69,6 +72,41 @@ func (l *limiter) fail(key string) {
 			d = l.cap
 		}
 		e.until = now.Add(d)
+	}
+}
+
+// reserve atomically checks the key and, if it may proceed, counts one failure
+// in advance. Concurrent requests therefore cannot all slip past check before
+// any of them has been recorded as failed. Returns 0 when reserved, else the
+// wait. A reservation that turns out to be a success is returned with refund.
+func (l *limiter) reserve(key string) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if e := l.entries[key]; e != nil {
+		if d := e.until.Sub(now); d > 0 {
+			return d
+		}
+	}
+	l.failLocked(key, now)
+	return 0
+}
+
+// refund takes back one reservation (the attempt did not fail). It does not
+// clear earlier failures, so a success still cannot be used to reset the counter.
+func (l *limiter) refund(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[key]
+	if e == nil {
+		return
+	}
+	if e.fails--; e.fails <= 0 {
+		delete(l.entries, key)
+		return
+	}
+	if e.fails <= l.free {
+		e.until = time.Time{} // the lockout was caused by this very reservation
 	}
 }
 

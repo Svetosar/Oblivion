@@ -270,10 +270,11 @@ func (p *Plugin) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ik, uk := ipKey(p.clientIP(r)), userKey(in.Username)
-	if d := max(p.ipLimit.check(ik), p.userLimit.check(uk)); d > 0 {
-		tooMany(w, d)
+	att := p.begin(w, ik, uk)
+	if att == nil {
 		return
 	}
+	defer att.finish()
 	u, err := p.findUser(r, in.Username)
 	if err != nil {
 		p.internalErr(w, "find user", err)
@@ -292,15 +293,15 @@ func (p *Plugin) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if u == nil || !ok || u.disabled {
-		p.ipLimit.fail(ik)
-		p.userLimit.fail(uk)
+		att.failed()
 		p.emit(r.Context(), "auth.login_failed", map[string]any{"username": in.Username})
 		writeErr(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
-	// The per-IP counter is deliberately NOT reset on success: otherwise an
-	// attacker with their own account could reset it between guesses.
-	p.userLimit.reset(uk)
+	// The per-IP counter is deliberately NOT reset on success (finish only
+	// refunds this attempt's own reservation): otherwise an attacker with their
+	// own account could reset it between guesses.
+	att.succeeded()
 	csrf, err := p.startSession(w, r, u.id)
 	if err != nil {
 		p.internalErr(w, "start session", err)
@@ -364,10 +365,11 @@ func (p *Plugin) handlePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ik, uk := ipKey(p.clientIP(r)), userKey(s.principal.Username)
-	if d := max(p.ipLimit.check(ik), p.userLimit.check(uk)); d > 0 {
-		tooMany(w, d)
+	att := p.begin(w, ik, uk)
+	if att == nil {
 		return
 	}
+	defer att.finish()
 	var hash string
 	if err := p.db.QueryRowContext(r.Context(), `SELECT password_hash FROM auth_users WHERE id = ?`, s.principal.UserID).Scan(&hash); err != nil {
 		p.internalErr(w, "load hash", err)
@@ -381,11 +383,11 @@ func (p *Plugin) handlePassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !ok {
-		p.ipLimit.fail(ik)
-		p.userLimit.fail(uk)
+		att.failed()
 		writeErr(w, http.StatusForbidden, "current password is incorrect")
 		return
 	}
+	att.succeeded()
 	if err := validatePassword(in.New); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

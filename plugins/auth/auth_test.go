@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -601,4 +603,89 @@ func TestExpiredSessionsAreCleanedUp(t *testing.T) {
 	if err != nil || n != 2 || countSessions(t, e) != 0 {
 		t.Fatalf("idle sessions not removed: n=%d err=%v left=%d", n, err, countSessions(t, e))
 	}
+}
+
+func TestLimiterReserveIsAtomic(t *testing.T) {
+	l := newLimiter(10, time.Minute, time.Hour, time.Hour)
+	var wg sync.WaitGroup
+	var granted atomic.Int32
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if l.reserve("k") == 0 {
+				granted.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	// free=10 failures are allowed, the 11th attempt is the one that triggers the lockout.
+	if got := granted.Load(); got != 11 {
+		t.Fatalf("%d attempts passed, want exactly 11", got)
+	}
+}
+
+func TestLimiterRefund(t *testing.T) {
+	l := newLimiter(2, time.Minute, time.Hour, time.Hour)
+	l.reserve("k")
+	l.reserve("k")
+	if l.reserve("k") != 0 { // third attempt: allowed, and it starts the lockout
+		t.Fatal("third attempt must be allowed")
+	}
+	if l.check("k") == 0 {
+		t.Fatal("no lockout after the third reservation")
+	}
+	l.refund("k") // that third attempt turned out to be a success
+	if l.check("k") != 0 {
+		t.Fatal("lockout caused by the refunded reservation must be lifted")
+	}
+	if l.entries["k"].fails != 2 {
+		t.Fatalf("refund must not clear earlier failures, fails=%d", l.entries["k"].fails)
+	}
+	l.refund("k")
+	l.refund("k")
+	if len(l.entries) != 0 {
+		t.Fatal("entry must disappear once every reservation is refunded")
+	}
+}
+
+func TestParallelWrongLoginsAreBounded(t *testing.T) {
+	e := newEnv(t)
+	e.setupAdmin()
+	var wg sync.WaitGroup
+	var unauthorized, other atomic.Int32
+	for i := 0; i < 60; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := e.client("192.0.2.50").do("POST", "/login", map[string]string{"username": "admin", "password": "wrong password"})
+			if w.Code == 401 {
+				unauthorized.Add(1)
+			} else {
+				other.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := unauthorized.Load(); n > 11 {
+		t.Fatalf("%d guesses were evaluated from one network, limit is 11", n)
+	}
+}
+
+func TestOneNetworkCannotOccupyAllHashSlots(t *testing.T) {
+	e := newEnv(t)
+	e.setupAdmin()
+	ik := ipKey("192.0.2.60")
+	if !e.p.inflight.enter(ik) { // a check from this network is already running
+		t.Fatal("enter")
+	}
+	w := e.client("192.0.2.60").do("POST", "/login", map[string]string{"username": "admin", "password": adminPW})
+	want(t, w, 429)
+	if d := e.p.ipLimit.check(ik); d != 0 || len(e.p.ipLimit.entries) != 0 && e.p.ipLimit.entries[ik] != nil {
+		t.Fatalf("a rejected parallel request must leave no trace in the limiter (wait %v)", d)
+	}
+	// Another network is not affected.
+	want(t, e.client("192.0.2.61").do("POST", "/login", map[string]string{"username": "admin", "password": adminPW}), 200)
+	e.p.inflight.leave(ik)
+	want(t, e.client("192.0.2.60").do("POST", "/login", map[string]string{"username": "admin", "password": adminPW}), 200)
 }

@@ -29,6 +29,7 @@ type Plugin struct {
 
 	ipLimit   *limiter // per client network (IPv6 grouped by /64)
 	userLimit *limiter // per username, from any address: slows distributed guessing
+	inflight  flights  // password checks currently running, per client network
 
 	stop context.CancelFunc // stops the session cleanup loop
 
