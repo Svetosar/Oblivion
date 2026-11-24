@@ -77,6 +77,15 @@ type Closer interface {
 	Close(ctx context.Context) error
 }
 
+// Runtime is read-only information about the running instance.
+type Runtime struct {
+	// SecureCookies is true when cookies must carry the Secure flag (TLS in front).
+	SecureCookies bool
+	// ClientIP returns the client address of r. X-Forwarded-For is honored only
+	// when the direct peer is a configured trusted proxy; never trust the header yourself.
+	ClientIP func(r *http.Request) string
+}
+
 type (
 	// ActionFunc observes an event; an error is logged and does not stop other listeners.
 	ActionFunc func(ctx context.Context, payload any) error
@@ -87,6 +96,7 @@ type (
 // Host is the per-plugin handle to the kernel. Every method is capability-gated.
 type Host interface {
 	Log() *slog.Logger // always available; already tagged with the plugin id
+	Runtime() Runtime  // always available
 
 	DB() (*sql.DB, error)                              // CapDB
 	KV() (KV, error)                                   // CapKV
