@@ -13,10 +13,11 @@ import (
 
 	"oblivion/internal/config"
 	"oblivion/internal/httpx"
+	"oblivion/internal/plugins"
 )
 
 // New builds the HTTP server. Routes are registered on a ServeMux (Go 1.22+ patterns).
-func New(cfg config.Config, log *slog.Logger, d *sql.DB) *http.Server {
+func New(cfg config.Config, log *slog.Logger, d *sql.DB, mgr *plugins.Manager) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -30,9 +31,16 @@ func New(cfg config.Config, log *slog.Logger, d *sql.DB) *http.Server {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
+	// Everything else belongs to plugins: /api/ to their API routes, the rest
+	// to their public routes. The identity middleware resolves the principal
+	// for every request and fails closed.
+	mux.Handle("/api/", mgr.APIHandler())
+	mux.Handle("/", mgr.PublicHandler())
+
 	handler := httpx.Chain(mux,
 		httpx.Recover(log),
 		httpx.AccessLog(log),
+		mgr.IdentityMiddleware,
 		httpx.SecurityHeaders(cfg.SecureCookie),
 		httpx.MaxBody(cfg.MaxBodyBytes),
 	)

@@ -7,14 +7,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"oblivion/internal/brand"
 	"oblivion/internal/config"
 	"oblivion/internal/db"
+	"oblivion/internal/httpx"
+	"oblivion/internal/plugins"
 	"oblivion/internal/server"
+	officialplugins "oblivion/plugins"
+	"oblivion/sdk"
 )
 
 func main() {
@@ -28,6 +35,14 @@ func run() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "healthcheck":
+			return healthcheck(cfg)
+		default:
+			return fmt.Errorf("unknown command %q", os.Args[1])
+		}
 	}
 	var lvl slog.Level
 	_ = lvl.UnmarshalText([]byte(cfg.LogLevel))
@@ -47,6 +62,35 @@ func run() error {
 	}
 	defer d.Close()
 
-	srv := server.New(cfg, log, d)
+	mgr := plugins.New(log, d, officialplugins.EssentialIDs...)
+	mgr.SetRuntime(sdk.Runtime{SecureCookies: cfg.SecureCookie, ClientIP: httpx.ClientIPFunc(cfg.TrustedProxies)})
+	for _, p := range officialplugins.All() {
+		mgr.Register(p)
+	}
+	// Essential plugins failing to start aborts here: fail closed.
+	if err := mgr.Start(ctx); err != nil {
+		return err
+	}
+	defer mgr.Close(context.Background())
+
+	srv := server.New(cfg, log, d, mgr)
 	return server.Serve(ctx, srv, cfg.ShutdownWait, log)
+}
+
+// healthcheck probes the local /healthz; the scratch image has no curl.
+func healthcheck(cfg config.Config) error {
+	_, port, err := net.SplitHostPort(cfg.Listen)
+	if err != nil {
+		return err
+	}
+	c := http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthz returned %d", resp.StatusCode)
+	}
+	return nil
 }
