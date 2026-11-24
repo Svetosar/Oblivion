@@ -14,4 +14,5 @@ COPY --from=build /out/oblivion /oblivion
 USER 65532:65532
 ENV OBLIVION_DATA_DIR=/data OBLIVION_LISTEN=0.0.0.0:8080 OBLIVION_LOG_JSON=true GOMEMLIMIT=256MiB
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s CMD ["/oblivion", "healthcheck"]
 ENTRYPOINT ["/oblivion"]
