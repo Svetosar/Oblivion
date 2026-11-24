@@ -4,10 +4,13 @@ package media
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // The content plugin lets other plugins post-process article HTML through the
@@ -23,26 +26,43 @@ var (
 	hasAttrs = regexp.MustCompile(`\s(?:width|height|loading)=`)
 )
 
-type dims struct{ w, h int }
+type dims struct {
+	w, h int
+	miss time.Time // non-zero: the name was not found; remembered until then
+}
 
-// dimCache remembers image sizes. Stored names are immutable, so entries never
-// go stale; it is simply emptied when full.
+// dimCache remembers image sizes. Stored names are immutable, so hits never go
+// stale; it is simply emptied when full. Unknown names (a typo, a deleted file)
+// are remembered briefly too, so a post referencing one does not hit the
+// database on every view; they expire because the upload might come later.
 type dimCache struct {
 	mu sync.Mutex
 	m  map[string]dims
 }
 
-const dimCacheMax = 2000
+const (
+	dimCacheMax = 2000
+	missTTL     = time.Minute
+)
 
 func (p *Plugin) dimensions(ctx context.Context, name string) (dims, bool) {
+	now := p.now()
 	p.dc.mu.Lock()
 	d, ok := p.dc.m[name]
 	p.dc.mu.Unlock()
-	if ok {
+	if ok && d.miss.IsZero() {
 		return d, true
 	}
-	if err := p.db.QueryRowContext(ctx, `SELECT width, height FROM media_items WHERE stored_name = ?`, name).Scan(&d.w, &d.h); err != nil {
+	if ok && now.Before(d.miss) {
 		return dims{}, false
+	}
+	d = dims{}
+	err := p.db.QueryRowContext(ctx, `SELECT width, height FROM media_items WHERE stored_name = ?`, name).Scan(&d.w, &d.h)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		d = dims{miss: now.Add(missTTL)}
+	case err != nil:
+		return dims{}, false // a real failure is not cached
 	}
 	p.dc.mu.Lock()
 	if p.dc.m == nil || len(p.dc.m) >= dimCacheMax {
@@ -50,7 +70,7 @@ func (p *Plugin) dimensions(ctx context.Context, name string) (dims, bool) {
 	}
 	p.dc.m[name] = d
 	p.dc.mu.Unlock()
-	return d, true
+	return d, d.miss.IsZero()
 }
 
 func (p *Plugin) filterHTML(ctx context.Context, v any) (any, error) {

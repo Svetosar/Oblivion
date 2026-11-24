@@ -661,3 +661,23 @@ func TestHTMLFilterAddsDimensionsAndLazyLoading(t *testing.T) {
 		t.Error("non-string values must pass through")
 	}
 }
+
+// Unknown names are remembered briefly (no DB query per view), then retried.
+func TestDimensionsNegativeCacheExpires(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	e := newEnvWith(t, func(p *Plugin) { p.now = func() time.Time { return now } })
+	name := strings.Repeat("0", 32) + ".png"
+	if _, ok := e.plugin.dimensions(context.Background(), name); ok {
+		t.Fatal("unknown name reported as known")
+	}
+	if d, ok := e.plugin.dc.m[name]; !ok || d.miss.IsZero() {
+		t.Fatal("miss was not remembered")
+	}
+	now = now.Add(missTTL + time.Second)
+	if _, ok := e.plugin.dimensions(context.Background(), name); ok {
+		t.Fatal("a name that is still missing must stay unknown after expiry")
+	}
+	if d := e.plugin.dc.m[name]; !d.miss.After(now) {
+		t.Fatal("expired miss was not refreshed by a new lookup")
+	}
+}
