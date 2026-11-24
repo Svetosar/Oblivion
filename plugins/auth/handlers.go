@@ -7,16 +7,15 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"io"
-	"mime"
 	"net"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"oblivion/sdk"
 )
 
 const (
@@ -59,42 +58,18 @@ func (p *Plugin) registerRoutes() error {
 
 // ---- helpers ---------------------------------------------------------------
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(code)
-	if v != nil {
-		_ = json.NewEncoder(w).Encode(v)
-	}
-}
-
-func writeErr(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
-}
+var (
+	writeJSON = sdk.WriteJSON
+	writeErr  = sdk.WriteError
+)
 
 func (p *Plugin) internalErr(w http.ResponseWriter, what string, err error) {
 	p.h.Log().Error(what, "err", err)
 	writeErr(w, http.StatusInternalServerError, "internal error")
 }
 
-// decode reads a strict JSON body. Requiring application/json also stops
-// cross-site HTML form posts, which cannot set that content type.
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-		writeErr(w, http.StatusUnsupportedMediaType, "content type must be application/json")
-		return false
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON body")
-		return false
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		writeErr(w, http.StatusBadRequest, "invalid JSON body")
-		return false
-	}
-	return true
+	return sdk.DecodeJSON(w, r, v, maxBodyBytes)
 }
 
 func tooMany(w http.ResponseWriter, d time.Duration) {
