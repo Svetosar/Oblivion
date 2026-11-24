@@ -63,6 +63,7 @@ func run() error {
 	defer d.Close()
 
 	mgr := plugins.New(log, d, officialplugins.EssentialIDs...)
+	mgr.SetDataDir(cfg.DataDir)
 	mgr.SetRuntime(sdk.Runtime{SecureCookies: cfg.SecureCookie, ClientIP: httpx.ClientIPFunc(cfg.TrustedProxies)})
 	for _, p := range officialplugins.All() {
 		mgr.Register(p)

@@ -52,6 +52,13 @@ func (h *host) KV() (sdk.KV, error) {
 	return &kvStore{db: h.m.db, plugin: h.id}, nil
 }
 
+func (h *host) Files() (sdk.Files, error) {
+	if err := h.need(sdk.CapFiles); err != nil {
+		return nil, err
+	}
+	return openFiles(h.m.dataDir, h.id)
+}
+
 // splitPattern splits "[METHOD ]/path" and validates it. Host-based patterns,
 // relative paths and path traversal are rejected.
 func splitPattern(p string) (method, path string, err error) {

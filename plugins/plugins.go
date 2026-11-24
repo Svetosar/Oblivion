@@ -6,6 +6,7 @@ package plugins
 import (
 	"oblivion/plugins/auth"
 	"oblivion/plugins/content"
+	"oblivion/plugins/media"
 
 	"oblivion/sdk"
 )
@@ -15,5 +16,5 @@ var EssentialIDs = []string{"auth"}
 
 // All returns a fresh instance of every official plugin.
 func All() []sdk.Plugin {
-	return []sdk.Plugin{auth.New(), content.New()}
+	return []sdk.Plugin{auth.New(), content.New(), media.New()}
 }

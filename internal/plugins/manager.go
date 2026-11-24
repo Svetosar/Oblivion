@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 
 	"oblivion/internal/db"
@@ -42,13 +43,15 @@ type Manager struct {
 	publicMux *http.ServeMux
 
 	runtime    sdk.Runtime
+	dataDir    string
 	essential  map[string]bool
 	registered []sdk.Plugin
 
-	mu       sync.RWMutex
-	services map[string]any
-	identity sdk.Identity
-	active   []string // ids, init order
+	mu         sync.RWMutex
+	services   map[string]any
+	bodyLimits map[string]int64
+	identity   sdk.Identity
+	active     []string // ids, init order
 }
 
 // New creates a manager. essential lists plugin ids without which the kernel
@@ -57,13 +60,32 @@ func New(log *slog.Logger, d *sql.DB, essential ...string) *Manager {
 	m := &Manager{
 		log: log, db: d, bus: newHookBus(log),
 		apiMux: http.NewServeMux(), publicMux: http.NewServeMux(),
-		essential: map[string]bool{}, services: map[string]any{},
+		essential: map[string]bool{}, services: map[string]any{}, bodyLimits: map[string]int64{},
 		runtime: sdk.Runtime{ClientIP: httpx.ClientIPFunc(nil)},
 	}
 	for _, e := range essential {
 		m.essential[e] = true
 	}
 	return m
+}
+
+// SetDataDir sets the directory under which plugins with CapFiles get a private folder.
+func (m *Manager) SetDataDir(dir string) { m.dataDir = dir }
+
+// BodyLimit returns the request body limit for path: a plugin's declared
+// MaxBodyBytes for its own /api/v1/<id>/ routes, def otherwise.
+func (m *Manager) BodyLimit(path string, def int64) int64 {
+	rest, ok := strings.CutPrefix(path, "/api/v1/")
+	if !ok {
+		return def
+	}
+	id, _, _ := strings.Cut(rest, "/")
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if l, ok := m.bodyLimits[id]; ok && l > def {
+		return l
+	}
+	return def
 }
 
 // SetRuntime sets the instance information exposed to plugins. Call before Start.
@@ -110,6 +132,9 @@ func validate(mf sdk.Manifest) error {
 	}
 	if len(mf.Hooks) > 0 && !caps[sdk.CapHooks] {
 		return errors.New("declares hooks without capability hooks")
+	}
+	if mf.MaxBodyBytes < 0 || mf.MaxBodyBytes > MaxPluginBody {
+		return fmt.Errorf("MaxBodyBytes must be within 0..%d", MaxPluginBody)
 	}
 	if mf.Migrations != nil && !caps[sdk.CapDB] {
 		return errors.New("declares migrations without capability db")
@@ -303,6 +328,11 @@ func (m *Manager) startOne(ctx context.Context, p sdk.Plugin) (err error) {
 	}
 	for _, s := range mf.Requires {
 		h.requires[s] = true
+	}
+	if mf.MaxBodyBytes > 0 {
+		m.mu.Lock()
+		m.bodyLimits[mf.ID] = mf.MaxBodyBytes
+		m.mu.Unlock()
 	}
 	if mf.Migrations != nil {
 		if err := db.Migrate(ctx, m.db, mf.Migrations, "plugin_"+mf.ID+"_migrations"); err != nil {

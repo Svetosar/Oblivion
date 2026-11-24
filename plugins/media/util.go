@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package media
+
+import (
+	"bytes"
+	"io"
+)
+
+func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }

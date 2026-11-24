@@ -8,7 +8,7 @@ import "oblivion/sdk"
 // check them (e.g. the content plugin checks "content.write").
 var rolePerms = map[string][]string{
 	"admin":  {"*"},
-	"editor": {"content.read", "content.write", "content.publish", "media.read", "media.write"},
+	"editor": {"content.read", "content.write", "content.publish", "media.read", "media.write", "media.manage"},
 	"author": {"content.read", "content.write.own", "media.read", "media.write"},
 }
 

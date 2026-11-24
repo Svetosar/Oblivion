@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -23,17 +24,18 @@ const APIVersion = 1
 type Capability string
 
 const (
-	CapDB         Capability = "db"          // Host.DB: SQL access to the instance database
-	CapKV         Capability = "storage.kv"  // Host.KV: namespaced key/value store
-	CapHTTPAPI    Capability = "http.api"    // Host.HandleAPI: routes under /api/v1/<id>/
-	CapHTTPPublic Capability = "http.public" // Host.HandlePublic: routes on the public site
-	CapHooks      Capability = "hooks"       // Host.OnAction/OnFilter on manifest-declared hooks
-	CapIdentity   Capability = "identity"    // provide the identity service (authentication)
+	CapDB         Capability = "db"            // Host.DB: SQL access to the instance database
+	CapKV         Capability = "storage.kv"    // Host.KV: namespaced key/value store
+	CapHTTPAPI    Capability = "http.api"      // Host.HandleAPI: routes under /api/v1/<id>/
+	CapHTTPPublic Capability = "http.public"   // Host.HandlePublic: routes on the public site
+	CapHooks      Capability = "hooks"         // Host.OnAction/OnFilter on manifest-declared hooks
+	CapIdentity   Capability = "identity"      // provide the identity service (authentication)
+	CapFiles      Capability = "storage.files" // Host.Files: private directory on disk
 )
 
 // KnownCapabilities lists every capability the kernel understands.
 var KnownCapabilities = map[Capability]bool{
-	CapDB: true, CapKV: true, CapHTTPAPI: true, CapHTTPPublic: true, CapHooks: true, CapIdentity: true,
+	CapDB: true, CapKV: true, CapHTTPAPI: true, CapHTTPPublic: true, CapHooks: true, CapIdentity: true, CapFiles: true,
 }
 
 // ServiceIdentity is the well-known service name of the authentication provider.
@@ -63,6 +65,9 @@ type Manifest struct {
 	Requires     []string // service names that must be provided by other enabled plugins
 	Permissions  []string // permission strings this plugin introduces (e.g. "content.write")
 	Migrations   fs.FS    // optional; directory "migrations/NNNN_name.sql" (needs CapDB)
+	// MaxBodyBytes raises the request body limit for this plugin's API routes
+	// (e.g. uploads). 0 keeps the kernel default. The kernel caps it at 64 MiB.
+	MaxBodyBytes int64
 }
 
 // Plugin is implemented by every plugin.
@@ -100,6 +105,7 @@ type Host interface {
 
 	DB() (*sql.DB, error)                              // CapDB
 	KV() (KV, error)                                   // CapKV
+	Files() (Files, error)                             // CapFiles
 	HandleAPI(pattern string, h http.Handler) error    // CapHTTPAPI; pattern "[METHOD ]/path" relative to /api/v1/<id>
 	HandlePublic(pattern string, h http.Handler) error // CapHTTPPublic; pattern "[METHOD ]/path" on the site root
 
@@ -118,6 +124,22 @@ type KV interface {
 	Get(ctx context.Context, key string) (value []byte, ok bool, err error)
 	Set(ctx context.Context, key string, value []byte) error
 	Delete(ctx context.Context, key string) error
+}
+
+// Files is a private, flat directory belonging to one plugin. Names must be a
+// single path element (no separators, no "..", no leading dot); the kernel
+// enforces confinement, so a bug in a plugin cannot reach other files.
+type Files interface {
+	// Create makes a new file; it fails if the name already exists.
+	Create(name string) (io.WriteCloser, error)
+	Open(name string) (File, error)
+	Remove(name string) error
+}
+
+// File is a readable, seekable stored file (usable with http.ServeContent).
+type File interface {
+	io.ReadSeekCloser
+	Stat() (fs.FileInfo, error)
 }
 
 // Principal is the authenticated actor of a request.

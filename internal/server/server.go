@@ -42,7 +42,7 @@ func New(cfg config.Config, log *slog.Logger, d *sql.DB, mgr *plugins.Manager) *
 		httpx.AccessLog(log),
 		mgr.IdentityMiddleware,
 		httpx.SecurityHeaders(cfg.SecureCookie),
-		httpx.MaxBody(cfg.MaxBodyBytes),
+		bodyLimit(cfg.MaxBodyBytes, mgr),
 	)
 	return &http.Server{
 		Addr:              cfg.Listen,
@@ -77,4 +77,15 @@ func Serve(ctx context.Context, srv *http.Server, wait time.Duration, log *slog.
 		return err
 	}
 	return nil
+}
+
+// bodyLimit applies the default request body limit, raised for the API routes
+// of plugins that declare MaxBodyBytes in their manifest.
+func bodyLimit(def int64, mgr *plugins.Manager) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, mgr.BodyLimit(r.URL.Path, def))
+			next.ServeHTTP(w, r)
+		})
+	}
 }
