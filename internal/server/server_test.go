@@ -83,3 +83,40 @@ func TestServerWiringAndBodyLimits(t *testing.T) {
 		t.Fatalf("unknown path: %d", w.Code)
 	}
 }
+
+type denier struct{ err error }
+
+func (denier) Manifest() sdk.Manifest {
+	return sdk.Manifest{ID: "deny", Name: "d", Version: "0", APIVersion: sdk.APIVersion,
+		Capabilities: []sdk.Capability{sdk.CapIdentity}, Provides: []string{sdk.ServiceIdentity}}
+}
+func (d denier) Init(_ context.Context, h sdk.Host) error           { return h.Provide(sdk.ServiceIdentity, d) }
+func (d denier) Authenticate(*http.Request) (*sdk.Principal, error) { return nil, d.err }
+
+// Error answers produced before any handler runs must carry the security headers too.
+func TestSecurityHeadersOnEveryAnswer(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for name, err := range map[string]error{"403 forbidden": sdk.ErrForbidden, "500 identity failure": io.ErrUnexpectedEOF} {
+		d, derr := db.Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		mgr := plugins.New(log, d)
+		mgr.Register(denier{err: err})
+		if e := mgr.Start(context.Background()); e != nil {
+			t.Fatal(e)
+		}
+		srv := New(config.Config{MaxBodyBytes: 1024, SecureCookie: true}, log, d, mgr)
+		w := httptest.NewRecorder()
+		srv.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/anything", nil))
+		if w.Code != 403 && w.Code != 500 {
+			t.Fatalf("%s: status %d", name, w.Code)
+		}
+		for _, h := range []string{"Content-Security-Policy", "X-Content-Type-Options", "Strict-Transport-Security", "Referrer-Policy"} {
+			if w.Header().Get(h) == "" {
+				t.Errorf("%s: missing %s", name, h)
+			}
+		}
+		d.Close()
+	}
+}

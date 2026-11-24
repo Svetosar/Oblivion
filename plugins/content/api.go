@@ -278,7 +278,7 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var id int64
 	if in.Slug != "" {
 		id, err = insert(in.Slug)
-		if isUnique(err) {
+		if sdk.IsUniqueViolation(err) {
 			sdk.WriteError(w, http.StatusConflict, "slug already in use")
 			return
 		}
@@ -292,11 +292,11 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if i > 1 {
 				slug = base + "-" + strconv.Itoa(i)
 			}
-			if id, err = insert(slug); !isUnique(err) {
+			if id, err = insert(slug); !sdk.IsUniqueViolation(err) {
 				break
 			}
 		}
-		if isUnique(err) {
+		if sdk.IsUniqueViolation(err) {
 			sdk.WriteError(w, http.StatusConflict, "could not find a free slug; set one explicitly")
 			return
 		}
@@ -374,7 +374,7 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	_, err = p.db.ExecContext(r.Context(),
 		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, status=?, updated_at=?, published_at=? WHERE id=?`,
 		slug, in.Title, in.BodyMD, html, in.Status, now, pub, id)
-	if isUnique(err) {
+	if sdk.IsUniqueViolation(err) {
 		sdk.WriteError(w, http.StatusConflict, "slug already in use")
 		return
 	}
@@ -446,5 +446,3 @@ func (p *Plugin) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	sdk.WriteJSON(w, http.StatusOK, map[string]string{"html": html})
 }
-
-func isUnique(err error) bool { return err != nil && strings.Contains(err.Error(), "UNIQUE") }

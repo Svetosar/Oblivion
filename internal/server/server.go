@@ -41,12 +41,14 @@ func New(cfg config.Config, log *slog.Logger, d *sql.DB, mgr *plugins.Manager) *
 	mux.Handle("/api/", mgr.APIHandler())
 	mux.Handle("/", mgr.PublicHandler())
 
+	// First is outermost. Security headers wrap everything, so even a panic
+	// (500) or a rejected identity (403) carries the CSP and friends.
 	handler := httpx.Chain(mux,
+		httpx.SecurityHeaders(cfg.SecureCookie),
 		httpx.Recover(log),
 		httpx.AccessLog(log),
-		mgr.IdentityMiddleware,
-		httpx.SecurityHeaders(cfg.SecureCookie),
 		bodyLimit(cfg.MaxBodyBytes, mgr),
+		mgr.IdentityMiddleware,
 	)
 	return &http.Server{
 		Addr:              cfg.Listen,

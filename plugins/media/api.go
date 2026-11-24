@@ -90,6 +90,9 @@ func (p *Plugin) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if pr == nil {
 		return
 	}
+	// The server-wide ReadTimeout would cut off slow uploads of big photos.
+	// Not supported by every ResponseWriter (tests); then the default stays.
+	_ = http.NewResponseController(w).SetReadDeadline(p.now().Add(uploadDeadline))
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
@@ -146,6 +149,16 @@ func (p *Plugin) handleUpload(w http.ResponseWriter, r *http.Request) {
 	cfg, _, err := image.DecodeConfig(bytesReader(clean))
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > maxPixels {
 		sdk.WriteError(w, http.StatusBadRequest, "invalid image or too many pixels")
+		return
+	}
+
+	var used int64
+	if err := p.db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(size), 0) FROM media_items WHERE uploader_id = ?`, pr.UserID).Scan(&used); err != nil {
+		p.internalErr(w, "quota query", err)
+		return
+	}
+	if used+int64(len(clean)) > p.quota {
+		sdk.WriteError(w, http.StatusRequestEntityTooLarge, "storage quota exceeded: delete some images first")
 		return
 	}
 

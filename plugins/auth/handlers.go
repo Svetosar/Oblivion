@@ -144,8 +144,6 @@ func (p *Plugin) findUser(r *http.Request, username string) (*dbUser, error) {
 	return u, err
 }
 
-func isUnique(err error) bool { return err != nil && strings.Contains(err.Error(), "UNIQUE") }
-
 // ---- setup -----------------------------------------------------------------
 
 // issueSetupToken creates a fresh one-time token and logs it for the operator.
@@ -487,7 +485,7 @@ func (p *Plugin) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	res, err := p.db.ExecContext(r.Context(),
 		`INSERT INTO auth_users(username, password_hash, role, created_at) VALUES (?,?,?,?)`,
 		in.Username, hash, in.Role, now)
-	if isUnique(err) {
+	if sdk.IsUniqueViolation(err) {
 		writeErr(w, http.StatusConflict, "username already taken")
 		return
 	}

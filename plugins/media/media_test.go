@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/image/webp"
 
@@ -323,6 +324,11 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, nil)
+}
+
+func newEnvWith(t *testing.T, tweak func(*Plugin)) *env {
+	t.Helper()
 	d, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +338,11 @@ func newEnv(t *testing.T) *env {
 	m := plugins.New(slog.New(slog.NewTextHandler(io.Discard, nil)), d)
 	m.SetDataDir(dir)
 	m.Register(fakeIdentity{})
-	m.Register(New())
+	pl := New()
+	if tweak != nil {
+		tweak(pl)
+	}
+	m.Register(pl)
 	if err := m.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -563,5 +573,65 @@ func TestStripJPEGScanStructure(t *testing.T) {
 	}
 	if _, err := stripJPEG(cat([]byte{0xFF, 0xD8}, seg(0xDB, "t"), []byte{0xFF, 0xD9})); err == nil {
 		t.Fatal("JPEG without a scan accepted")
+	}
+}
+
+func TestUploadQuota(t *testing.T) {
+	img := pngWithMetadata(t)
+	clean, _ := strip(kPNG, img)
+	e := newEnvWith(t, func(p *Plugin) { p.quota = int64(len(clean)*2 + 10) })
+	want(t, e.upload("author:3", "1.png", img), 201)
+	want(t, e.upload("author:3", "2.png", img), 201)
+	want(t, e.upload("author:3", "3.png", img), 413) // over quota
+	want(t, e.upload("author:4", "4.png", img), 201) // quotas are per uploader
+	// Deleting frees quota.
+	var items []itemView
+	w := e.req("author:3", "GET", "/api/v1/media/items", nil, "")
+	_ = json.Unmarshal(w.Body.Bytes(), &items)
+	var mine int64
+	for _, it := range items {
+		if it.UploaderID == 3 {
+			mine = it.ID
+		}
+	}
+	want(t, e.req("author:3", "DELETE", fmt.Sprintf("/api/v1/media/items/%d", mine), nil, ""), 204)
+	want(t, e.upload("author:3", "5.png", img), 201)
+}
+
+// The upload route must outlive the server-wide read timeout (slow mobile links).
+func TestUploadSurvivesShortServerReadTimeout(t *testing.T) {
+	e := newEnv(t)
+	srv := httptest.NewUnstartedServer(e.h)
+	srv.Config.ReadTimeout = 400 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", `form-data; name="file"; filename="a.png"`)
+	pw, _ := mw.CreatePart(h)
+	_, _ = pw.Write(pngWithMetadata(t))
+	_ = mw.Close()
+	data := body.Bytes()
+
+	pr, pwr := io.Pipe()
+	go func() {
+		_, _ = pwr.Write(data[:len(data)/2])
+		time.Sleep(900 * time.Millisecond) // slower than ReadTimeout
+		_, _ = pwr.Write(data[len(data)/2:])
+		_ = pwr.Close()
+	}()
+	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/media/items", pr)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-Test-User", "author:3")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("slow upload failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, b)
 	}
 }

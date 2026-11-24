@@ -26,6 +26,13 @@ const (
 	// The request body limit leaves room for multipart framing.
 	maxRequest = maxUpload + 1<<20
 	maxPixels  = 50_000_000
+
+	// Total stored bytes allowed per uploader: a low-privilege account must not
+	// be able to fill the disk.
+	defaultQuota = 200 << 20
+	// A large upload over a slow link legitimately takes longer than the
+	// server-wide read timeout; the upload route extends its own deadline.
+	uploadDeadline = 3 * time.Minute
 )
 
 type Plugin struct {
@@ -34,10 +41,11 @@ type Plugin struct {
 	h     sdk.Host
 	now   func() time.Time
 	sem   chan struct{} // bounds in-memory uploads: 1 GB host
+	quota int64         // per-uploader byte quota
 }
 
 func New() *Plugin {
-	return &Plugin{now: time.Now, sem: make(chan struct{}, 2)}
+	return &Plugin{now: time.Now, sem: make(chan struct{}, 2), quota: defaultQuota}
 }
 
 func (p *Plugin) Manifest() sdk.Manifest {
