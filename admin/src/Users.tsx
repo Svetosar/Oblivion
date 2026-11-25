@@ -43,7 +43,7 @@ export function UsersPage({ me }: { me: Me }) {
       {msg && <p className={msg.ok ? "ok" : "error"} role="alert">{msg.text}</p>}
       <CreateUser onCreated={() => { setMsg({ ok: true, text: "User created." }); load(); }} onError={(t) => setMsg({ ok: false, text: t })} />
       {users && (
-        <table>
+        <table className="stack">
           <thead>
             <tr>
               <th>User</th>
@@ -69,21 +69,27 @@ export function UsersPage({ me }: { me: Me }) {
                 <td>
                   <span className={"tag " + (u.disabled ? "draft" : "published")}>{u.disabled ? "disabled" : "active"}</span>
                 </td>
-                <td>{fmtDate(u.created_at)}</td>
-                <td className="actions">
-                  <button onClick={() => void act(() => api("PATCH", `/auth/users/${u.id}`, { disabled: !u.disabled }), u.disabled ? "User enabled." : "User disabled.")}>{u.disabled ? "Enable" : "Disable"}</button>
-                  {resetFor === u.id ? (
-                    <form className="inline-reset" onSubmit={(e) => submitReset(e, u)}>
-                      <input type="password" value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="New password (12+ characters)" aria-label={`New password for ${u.username}`} minLength={12} required autoComplete="new-password" autoFocus />
-                      <button className="primary">Set</button>
-                      <button type="button" onClick={() => { setResetFor(null); setResetPw(""); }}>Cancel</button>
-                    </form>
-                  ) : (
-                    <button onClick={() => { setResetFor(u.id); setResetPw(""); }}>Reset password</button>
-                  )}
-                  <button className="danger" onClick={() => confirm(`Delete ${u.username}?`) && void act(() => api("DELETE", `/auth/users/${u.id}`), "User deleted.")}>
-                    Delete
-                  </button>
+                <td>
+                  <span className="mobile-only muted">Created </span>
+                  {fmtDate(u.created_at)}
+                </td>
+                <td className="wide">
+                  {/* A div: display:flex on the cell itself breaks the row borders. */}
+                  <div className="actions">
+                    <button onClick={() => void act(() => api("PATCH", `/auth/users/${u.id}`, { disabled: !u.disabled }), u.disabled ? "User enabled." : "User disabled.")}>{u.disabled ? "Enable" : "Disable"}</button>
+                    {resetFor === u.id ? (
+                      <form className="inline-reset" onSubmit={(e) => submitReset(e, u)}>
+                        <input type="password" value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="New password (12+ characters)" aria-label={`New password for ${u.username}`} minLength={12} required autoComplete="new-password" autoFocus />
+                        <button className="primary">Set</button>
+                        <button type="button" onClick={() => { setResetFor(null); setResetPw(""); }}>Cancel</button>
+                      </form>
+                    ) : (
+                      <button onClick={() => { setResetFor(u.id); setResetPw(""); }}>Reset password</button>
+                    )}
+                    <button className="danger" onClick={() => confirm(`Delete ${u.username}?`) && void act(() => api("DELETE", `/auth/users/${u.id}`), "User deleted.")}>
+                      Delete
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -25,7 +25,7 @@ export function ContentList({ me, query }: { me: Me; query: string }) {
       {items === null && !err && <p className="muted">Loading…</p>}
       {items && items.length === 0 && <p className="muted">Nothing here yet.</p>}
       {items && items.length > 0 && (
-        <table>
+        <table className="stack">
           <thead>
             <tr>
               <th>Title</th>
@@ -37,7 +37,7 @@ export function ContentList({ me, query }: { me: Me; query: string }) {
           <tbody>
             {items.map((it) => (
               <tr key={it.id}>
-                <td>
+                <td className="wide">
                   <a href={`#/content/${it.id}`}>{it.title}</a>
                 </td>
                 <td>
@@ -154,11 +154,11 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         <input value={slug} onChange={(e) => setSlug(e.target.value)} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-post" />
       </label>
       <div className="row">
-        <div className="tabs" role="tablist" aria-label="Editor view">
-          <button type="button" role="tab" aria-selected={tab === "write"} className={tab === "write" ? "on" : undefined} onClick={() => setTab("write")}>
+        <div className="tabs" role="group" aria-label="Editor view">
+          <button type="button" aria-pressed={tab === "write"} onClick={() => setTab("write")}>
             Write
           </button>
-          <button type="button" role="tab" aria-selected={tab === "preview"} className={tab === "preview" ? "on" : undefined} onClick={() => setTab("preview")}>
+          <button type="button" aria-pressed={tab === "preview"} onClick={() => setTab("preview")}>
             Preview
           </button>
         </div>

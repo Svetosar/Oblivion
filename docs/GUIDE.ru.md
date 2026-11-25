@@ -724,7 +724,9 @@ Init(ctx context.Context, h sdk.Host) error // запуск: тут плагин
 - `src/Settings.tsx` — настройки сайта.
 - `src/Account.tsx` — смена своего пароля.
 - `src/hooks.ts` — общие React-хуки.
-- `src/styles.css` — стили.
+- `src/styles.css` — стили. На узком экране меню уходит на отдельную строку, а
+  таблицы с классом `stack` (записи, пользователи) становятся карточками: ячейка
+  с классом `wide` занимает всю ширину.
 - `vite.config.ts`, `package.json` — сборка. `make admin` кладёт результат в
   `admin/dist`, а Go вшивает его в бинарник.
 

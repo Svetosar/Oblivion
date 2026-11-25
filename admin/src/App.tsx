@@ -121,10 +121,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
           {can(me, "users.manage") && link("/users", "Users", parts[0] === "users")}
           {can(me, "content.settings") && link("/settings", "Settings", parts[0] === "settings")}
           {link("/account", "Account", parts[0] === "account")}
-          <a href="/" target="_blank" rel="noreferrer">
-            View site
-          </a>
         </nav>
+        <a className="site-link" href="/" target="_blank" rel="noreferrer">
+          View site
+        </a>
         <button className="link" onClick={() => void logout()}>
           Log out ({me.username})
         </button>
