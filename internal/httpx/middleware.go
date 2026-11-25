@@ -25,7 +25,9 @@ func SecurityHeaders(secure bool) func(http.Handler) http.Handler {
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Cross-Origin-Resource-Policy", "same-origin")
 			if secure {
-				h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+				// No includeSubDomains and no preload: HSTS is irrevocable for the
+				// whole max-age, and the operator's other hosts are not ours to bind.
+				h.Set("Strict-Transport-Security", "max-age=63072000")
 			}
 			next.ServeHTTP(w, r)
 		})
