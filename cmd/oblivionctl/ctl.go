@@ -160,8 +160,12 @@ var hardening = []string{"--read-only", "--cap-drop=ALL", "--security-opt", "no-
 // oneShot runs a command of the application image against the data volume, in a
 // container that disappears afterwards. -i keeps standard input open for passwords.
 func (a *app) oneShot(ctx context.Context, st *state, stdin io.Reader, stdout io.Writer, appArgs ...string) error {
+	return a.oneShotOn(ctx, st, volumeName, stdin, stdout, appArgs...)
+}
+
+func (a *app) oneShotOn(ctx context.Context, st *state, volume string, stdin io.Reader, stdout io.Writer, appArgs ...string) error {
 	args := append([]string{"run", "--rm", "-i"}, hardening...)
-	args = append(args, "-v", volumeName+":/data", st.Image)
+	args = append(args, "-v", volume+":/data", st.Image)
 	return a.engineRun(ctx, st, stdin, stdout, append(args, appArgs...)...)
 }
 
@@ -251,7 +255,7 @@ func (a *app) readPassword(login string, fromStdin bool) (string, error) {
 
 func (a *app) dispatch(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintf(a.out, usage, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName)
+		fmt.Fprintf(a.out, usage, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName, ctlName)
 		return nil
 	}
 	cmd, rest := args[0], args[1:]
@@ -262,6 +266,10 @@ func (a *app) dispatch(ctx context.Context, args []string) error {
 		return a.user(ctx, rest)
 	case "backup":
 		return a.backup(ctx, rest)
+	case "restore":
+		return a.restore(ctx, rest)
+	case "update":
+		return a.update(ctx, rest)
 	case "config":
 		return a.config(ctx, rest)
 	case "status":
@@ -279,6 +287,8 @@ const usage = `usage:
   %s user reset-password LOGIN [--password-stdin]
   %s user disable LOGIN | enable LOGIN
   %s backup [FILE]
+  %s restore FILE [--replace]            (--replace: overwrite existing data; it is saved first)
+  %s update [--image REF]                (backs up first; restores the old container if the new one does not start)
   %s config show | set KEY=VALUE...      keys: SECURE_COOKIE, TRUSTED_PROXIES, LOG_LEVEL
   %s status | logs [--tail N] [-f]
 `
@@ -468,6 +478,131 @@ func (a *app) backup(ctx context.Context, args []string) error {
 		return fmt.Errorf("backup failed: %w", err)
 	}
 	fmt.Fprintf(a.out, "backup written to %s (it contains password hashes: keep it private)\n", path)
+	return nil
+}
+
+// restore puts a backup back. Nothing is destroyed until the archive has been
+// proven good in a throw-away volume, and the data that is replaced is saved
+// first.
+func (a *app) restore(ctx context.Context, args []string) error {
+	st, err := a.loadState()
+	if err != nil {
+		return err
+	}
+	var path string
+	replace := false
+	for _, x := range args {
+		switch {
+		case x == "--replace":
+			replace = true
+		case path == "" && !strings.HasPrefix(x, "-"):
+			path = x
+		default:
+			return errors.New("usage: restore FILE [--replace]")
+		}
+	}
+	if path == "" {
+		return errors.New("usage: restore FILE [--replace]")
+	}
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a readable file", path)
+	}
+	exists := a.probe(ctx, st, "volume", "inspect", volumeName) == nil
+	if exists && !replace {
+		return fmt.Errorf("a data volume already exists: restoring replaces everything in it. Add --replace to do that; " +
+			"the current data is saved to a backup file first")
+	}
+
+	feed := func(volume string, out io.Writer) error {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return a.oneShotOn(ctx, st, volume, f, out, "restore", "-")
+	}
+
+	// 1. Prove the archive in a volume nobody uses.
+	check := volumeName + "-check"
+	if a.probe(ctx, st, "volume", "inspect", check) == nil {
+		_ = a.engineRun(ctx, st, nil, nil, "volume", "rm", "-f", check)
+	}
+	if err := a.engineRun(ctx, st, nil, nil, "volume", "create", check); err != nil {
+		return fmt.Errorf("create a test volume: %w", err)
+	}
+	trial := feed(check, nil) // the trial run is silent: it restores nothing that matters
+	_ = a.engineRun(ctx, st, nil, nil, "volume", "rm", "-f", check)
+	if trial != nil {
+		return fmt.Errorf("this archive cannot be restored; nothing was changed: %w", trial)
+	}
+
+	// 2. Stop the server, save what is there, start over with an empty volume.
+	fmt.Fprintln(a.out, "• the archive is good; stopping the server")
+	_ = a.engineRun(ctx, st, nil, nil, "stop", "-t", "20", containerName)
+	_ = a.engineRun(ctx, st, nil, nil, "rm", "-f", containerName)
+	saved := ""
+	if exists {
+		saved = fmt.Sprintf("%s-pre-restore-%s.tar.gz", brand.Slug, a.now().UTC().Format("20060102-150405"))
+		if err := a.backup(ctx, []string{saved}); err != nil {
+			_ = a.startServer(ctx, st) // put the old server back
+			return fmt.Errorf("the current data could not be saved first, so nothing was replaced (if the volume is really empty, remove it with `%s volume rm %s`): %w", st.Engine, volumeName, err)
+		}
+		if err := a.engineRun(ctx, st, nil, nil, "volume", "rm", "-f", volumeName); err != nil {
+			return fmt.Errorf("remove the old volume (your data is in %s): %w", saved, err)
+		}
+	}
+	if err := a.engineRun(ctx, st, nil, nil, "volume", "create", volumeName); err != nil {
+		return fmt.Errorf("create the volume: %w", err)
+	}
+	where := ""
+	if saved != "" {
+		where = fmt.Sprintf(" The data that was replaced is in %s.", saved)
+	}
+	if err := feed(volumeName, a.out); err != nil {
+		return fmt.Errorf("restore failed.%s: %w", where, err)
+	}
+	if err := a.startServer(ctx, st); err != nil {
+		return fmt.Errorf("the data was restored but the server does not start.%s %w", where, err)
+	}
+	fmt.Fprintf(a.out, "backup restored; the server is running again.%s\n", where)
+	return nil
+}
+
+// update switches to another image of the application: a backup first, then the
+// container is recreated, and the old container comes back if the new one does not
+// start. The database is migrated by the new version when it starts and is not
+// migrated back, so after a failed update the backup is what returns the data.
+func (a *app) update(ctx context.Context, args []string) error {
+	st, err := a.loadState()
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
+	image := fs.String("image", st.Image, "image to switch to (default: the same reference, rebuilt or pulled)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || !validImage(*image) {
+		return errors.New("usage: update [--image REF]")
+	}
+	if err := a.probe(ctx, st, "image", "inspect", *image); err != nil {
+		return fmt.Errorf("image %s not found (build it with `make image`): %w", *image, err)
+	}
+	saved := fmt.Sprintf("%s-pre-update-%s.tar.gz", brand.Slug, a.now().UTC().Format("20060102-150405"))
+	if err := a.backup(ctx, []string{saved}); err != nil {
+		return fmt.Errorf("update stopped: the backup before it failed: %w", err)
+	}
+	next := *st
+	next.Image = *image
+	if err := a.recreate(ctx, st, &next); err != nil {
+		return fmt.Errorf("the new image did not start and the previous container was restored. "+
+			"The new version may already have changed the database; if the old one misbehaves, `%s restore %s --replace`: %w", ctlName, saved, err)
+	}
+	if err := a.saveState(&next); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.out, "updated to %s; the backup from before is %s\n", *image, saved)
 	return nil
 }
 

@@ -432,3 +432,274 @@ func TestStatusAndLogsUseTheEngine(t *testing.T) {
 		t.Errorf("status output: %q", h.out)
 	}
 }
+
+// ---- restore and update ----
+
+func (h *harness) withVolume(exists bool) {
+	base := h.eng.script
+	h.eng.script = func(c call) (string, error) {
+		if c.has("volume", "inspect") {
+			if exists && c.has(volumeName) && !c.has(volumeName+"-check") {
+				return "", nil
+			}
+			return "", errors.New("no such volume")
+		}
+		if base != nil {
+			return base(c)
+		}
+		return "", nil
+	}
+}
+
+func writeArchive(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "in.tar.gz")
+	if err := os.WriteFile(path, []byte("ARCHIVE-BYTES"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func (h *harness) index(args ...string) int {
+	for i, c := range h.eng.calls {
+		if c.has(args...) {
+			return i
+		}
+	}
+	return -1
+}
+
+// A backup is only worth something if it can be restored, and a restore must not
+// destroy the current data before it knows the archive is good.
+func TestRestoreChecksTheArchiveBeforeDestroyingAnything(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.withVolume(true)
+	h.eng.script = func(c call) (string, error) {
+		if c.has("volume", "inspect") {
+			if c.has(volumeName + "-check") {
+				return "", errors.New("no such volume")
+			}
+			return "", nil
+		}
+		if c.has("backup", "-") {
+			return "CURRENT-DATA", nil
+		}
+		return "", nil
+	}
+	if err := h.do("restore", writeArchive(t), "--replace"); err != nil {
+		t.Fatal(err)
+	}
+
+	dry := -1
+	for i, c := range h.eng.calls {
+		if c.has("restore", "-") && c.has("-v", volumeName+"-check:/data") {
+			dry = i
+		}
+	}
+	stop := h.index("stop")
+	rmVol := h.index("volume", "rm", "-f", volumeName)
+	pre := h.index("backup", "-")
+	real := -1
+	for i, c := range h.eng.calls {
+		if c.has("restore", "-") && c.has("-v", volumeName+":/data") {
+			real = i
+		}
+	}
+	start := h.index("-d", "--name", "oblivion")
+	if dry < 0 || stop < 0 || pre < 0 || rmVol < 0 || real < 0 || start < 0 {
+		t.Fatalf("missing steps: dry=%d stop=%d pre=%d rmVol=%d real=%d start=%d\n%v", dry, stop, pre, rmVol, real, start, h.eng.calls)
+	}
+	if !(dry < stop && stop < pre && pre < rmVol && rmVol < real && real < start) {
+		t.Errorf("wrong order: dry=%d stop=%d pre=%d rmVol=%d real=%d start=%d", dry, stop, pre, rmVol, real, start)
+	}
+	if h.eng.calls[dry].stdin != "ARCHIVE-BYTES" || h.eng.calls[real].stdin != "ARCHIVE-BYTES" {
+		t.Error("the archive does not reach the restore command on standard input")
+	}
+	if len(h.eng.find("volume", "rm", "-f", volumeName+"-check")) != 1 {
+		t.Error("the throw-away volume of the dry run was not removed")
+	}
+	matches, _ := filepath.Glob("oblivion-pre-restore-*.tar.gz")
+	if len(matches) != 1 {
+		t.Fatalf("pre-restore backup files: %v", matches)
+	}
+	if b, _ := os.ReadFile(matches[0]); string(b) != "CURRENT-DATA" {
+		t.Errorf("the current data was not saved first: %q", b)
+	}
+}
+
+func TestRestoreOverExistingDataNeedsConsent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.withVolume(true)
+	err := h.do("restore", writeArchive(t))
+	if err == nil || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("restore over data without consent: %v", err)
+	}
+	for _, c := range h.eng.calls {
+		if c.has("stop") || c.has("rm") || c.has("volume", "rm") || c.has("restore", "-") {
+			t.Errorf("a destructive or restoring command ran without consent: %v", c.args)
+		}
+	}
+}
+
+func TestRestoreDoesNothingDestructiveWhenTheArchiveIsBad(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.eng.script = func(c call) (string, error) {
+		if c.has("volume", "inspect") {
+			if c.has(volumeName + "-check") {
+				return "", errors.New("no such volume")
+			}
+			return "", nil
+		}
+		if c.has("restore", "-") {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+	if err := h.do("restore", writeArchive(t), "--replace"); err == nil {
+		t.Fatal("a bad archive was accepted")
+	}
+	for _, c := range h.eng.calls {
+		if c.has("stop") || c.has("rm", "-f", containerName) || c.has("volume", "rm", "-f", volumeName) {
+			t.Errorf("the server or the data were touched although the archive is bad: %v", c.args)
+		}
+	}
+	if len(h.eng.find("volume", "rm", "-f", volumeName+"-check")) != 1 {
+		t.Error("the dry-run volume was left behind")
+	}
+}
+
+func TestRestoreStopsIfTheCurrentDataCannotBeSavedFirst(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.eng.script = func(c call) (string, error) {
+		if c.has("volume", "inspect") {
+			if c.has(volumeName + "-check") {
+				return "", errors.New("no such volume")
+			}
+			return "", nil
+		}
+		if c.has("backup", "-") {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+	if err := h.do("restore", writeArchive(t), "--replace"); err == nil {
+		t.Fatal("restore went on without a backup of the current data")
+	}
+	if len(h.eng.find("volume", "rm", "-f", volumeName)) != 0 {
+		t.Error("the volume was removed although it could not be saved")
+	}
+}
+
+func TestRestoreOnAFreshMachineNeedsNoConsent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.withVolume(false)
+	if err := h.do("restore", writeArchive(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.eng.find("-d", "--name", "oblivion")) != 1 {
+		t.Error("the server was not started after the restore")
+	}
+}
+
+func TestUpdateBacksUpThenSwitchesTheImage(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.eng.script = func(c call) (string, error) {
+		if c.has("backup", "-") {
+			return "DATA", nil
+		}
+		return "", nil
+	}
+	if err := h.do("update", "--image", "localhost/oblivion:next"); err != nil {
+		t.Fatal(err)
+	}
+	pre := h.index("backup", "-")
+	rm := h.index("rm", "-f", "oblivion")
+	start := h.index("-d", "--name", "oblivion")
+	if pre < 0 || rm < 0 || start < 0 || !(pre < rm && rm < start) {
+		t.Fatalf("order: backup=%d rm=%d start=%d: %v", pre, rm, start, h.eng.calls)
+	}
+	if matches, _ := filepath.Glob("oblivion-pre-update-*.tar.gz"); len(matches) != 1 {
+		t.Errorf("pre-update backup: %v", matches)
+	}
+	if h.eng.calls[start].args[len(h.eng.calls[start].args)-1] != "localhost/oblivion:next" {
+		t.Errorf("the new container does not use the new image: %v", h.eng.calls[start].args)
+	}
+	h.out.Reset()
+	if err := h.do("config", "show"); err != nil || !strings.Contains(h.out.String(), "image=localhost/oblivion:next") {
+		t.Errorf("the new image is not remembered: %v %q", err, h.out)
+	}
+}
+
+func TestUpdateRollsBackAndSaysHowToRestore(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	calls := 0
+	h.app.health = func(context.Context, int) error {
+		calls++
+		if calls <= 30 { // the new image never becomes healthy; the restored old one does
+			return errors.New("connection refused")
+		}
+		return nil
+	}
+	h.eng.script = func(c call) (string, error) {
+		if c.has("backup", "-") {
+			return "DATA", nil
+		}
+		return "", nil
+	}
+	err := h.do("update", "--image", "localhost/oblivion:broken")
+	if err == nil {
+		t.Fatal("update reported success for an image that does not start")
+	}
+	if !strings.Contains(err.Error(), "restore") || !strings.Contains(err.Error(), "pre-update") {
+		t.Errorf("the error does not say how to get the data back: %v", err)
+	}
+	starts := h.eng.find("-d", "--name", "oblivion")
+	if len(starts) != 2 || starts[1].args[len(starts[1].args)-1] != "localhost/oblivion:dev" {
+		t.Fatalf("the previous image was not started again: %v", starts)
+	}
+	h.out.Reset()
+	_ = h.do("config", "show")
+	if !strings.Contains(h.out.String(), "image=localhost/oblivion:dev") {
+		t.Errorf("a failed update changed the remembered image: %q", h.out)
+	}
+}
+
+// Without a backup there is no way back from a bad update: do not start.
+func TestUpdateStopsWhenTheBackupFails(t *testing.T) {
+	t.Chdir(t.TempDir())
+	h := newHarness(t)
+	h.install(t)
+	h.eng.script = func(c call) (string, error) {
+		if c.has("backup", "-") {
+			return "", errors.New("exit status 1")
+		}
+		return "", nil
+	}
+	if err := h.do("update", "--image", "localhost/oblivion:next"); err == nil {
+		t.Fatal("update went on without a backup")
+	}
+	for _, c := range h.eng.calls {
+		if c.has("stop") || c.has("rm") || c.has("-d", "--name", "oblivion") {
+			t.Errorf("the running server was touched: %v", c.args)
+		}
+	}
+	h.out.Reset()
+	_ = h.do("config", "show")
+	if !strings.Contains(h.out.String(), "image=localhost/oblivion:dev") {
+		t.Errorf("the image changed: %q", h.out)
+	}
+}

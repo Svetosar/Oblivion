@@ -80,6 +80,40 @@ func Snapshot(ctx context.Context, path, dest string) error {
 	return nil
 }
 
+// IntegrityCheck opens the database at path read-only and runs SQLite's integrity
+// check. A file that is not a database, or a damaged one, is an error.
+func IntegrityCheck(ctx context.Context, path string) error {
+	q := url.Values{"mode": {"ro"}}
+	q.Add("_pragma", "trusted_schema(0)")
+	d, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	rows, err := d.QueryContext(ctx, `PRAGMA integrity_check`)
+	if err != nil {
+		return fmt.Errorf("integrity check: %w", err)
+	}
+	defer rows.Close()
+	var problems []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return err
+		}
+		if line != "ok" {
+			problems = append(problems, line)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("integrity check: %w", err)
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("the database is damaged: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
 var tableRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
 // Migrate applies every not-yet-applied migrations/NNNN_name.sql found in fsys,

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -46,6 +47,8 @@ func run() error {
 			return runBackup(cfg, os.Args[2:])
 		case "user":
 			return runUser(cfg, os.Args[2:])
+		case "restore":
+			return runRestore(cfg, os.Args[2:])
 		default:
 			return fmt.Errorf("unknown command %q", os.Args[1])
 		}
@@ -99,6 +102,27 @@ func runBackup(cfg config.Config, args []string) error {
 		return errors.New("backup: refusing to write binary data to a terminal; redirect the output")
 	}
 	return backup.Write(ctx, os.Stdout, cfg.DataDir, cfg.DBPath())
+}
+
+// runRestore unpacks a backup read from standard input ("-") into an empty data
+// directory. It never overwrites: an existing database is a reason to stop.
+func runRestore(cfg config.Config, args []string) error {
+	if len(args) != 1 || args[0] != "-" {
+		return fmt.Errorf("usage: %s restore -   (the backup is read from standard input)", brand.Slug)
+	}
+	if st, err := os.Stdin.Stat(); err != nil || st.Mode()&os.ModeCharDevice != 0 {
+		return errors.New("restore: refusing to read a backup from a terminal; pipe the file in")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return err
+	}
+	if err := backup.Restore(ctx, os.Stdin, cfg.DataDir, filepath.Base(cfg.DBPath())); err != nil {
+		return err
+	}
+	fmt.Println("backup restored")
+	return nil
 }
 
 // healthcheck probes the local /healthz; the scratch image has no curl.
