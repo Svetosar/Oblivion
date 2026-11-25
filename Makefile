@@ -11,6 +11,7 @@ admin:
 	cd admin && npm ci && npm run build
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o $(BIN) ./cmd/oblivion
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o $(BIN)ctl ./cmd/oblivionctl
 vet:
 	$(GO) vet ./...
 test:

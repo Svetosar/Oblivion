@@ -52,6 +52,9 @@ func runUser(cfg config.Config, args []string) error {
 	ctx := context.Background()
 	if cmd != "create" {
 		if _, err := os.Stat(cfg.DBPath()); err != nil {
+			if cmd == "list" {
+				return nil // a volume that was never used has no accounts; do not create a database for that
+			}
 			return fmt.Errorf("no database in %s: nothing to manage yet", cfg.DataDir)
 		}
 	}
