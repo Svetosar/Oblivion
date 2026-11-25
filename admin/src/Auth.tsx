@@ -10,20 +10,22 @@ function Form({ title, children, onSubmit, submit, error, busy }: {
   busy: boolean;
 }) {
   return (
-    <form
-      className="card center-card"
-      onSubmit={(e: FormEvent) => {
-        e.preventDefault();
-        onSubmit();
-      }}
-    >
-      <h1>{title}</h1>
-      {children}
-      {error && <p className="error" role="alert">{error}</p>}
-      <button className="primary" disabled={busy}>
-        {submit}
-      </button>
-    </form>
+    <main>
+      <form
+        className="card center-card"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+      >
+        <h1>{title}</h1>
+        {children}
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary" disabled={busy}>
+          {submit}
+        </button>
+      </form>
+    </main>
   );
 }
 

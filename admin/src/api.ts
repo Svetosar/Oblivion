@@ -76,6 +76,17 @@ export interface User {
   created_at: number;
 }
 
+// Alt text proposed for an uploaded image: the file name without its extension.
+// It is only a start: the text stays editable in the editor.
+export const altText = (filename: string) => filename.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "").trim() || "image";
+
+// mergeById appends a fetched page to what is shown, skipping rows that moved
+// between pages while the list was open.
+export function mergeById<T extends { id: number }>(have: T[], more: T[]): T[] {
+  const seen = new Set(have.map((x) => x.id));
+  return have.concat(more.filter((x) => !seen.has(x.id)));
+}
+
 export const can = (me: Me, perm: string) => !!(me.perms && (me.perms["*"] || me.perms[perm]));
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export const fmtDate = (ts: number | null) => (ts ? new Date(ts * 1000).toLocaleString() : "—");

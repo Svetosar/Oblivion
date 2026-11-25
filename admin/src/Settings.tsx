@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errMsg } from "./api";
+import { useUnsavedGuard } from "./hooks";
 
 interface SiteSettings {
   site_title: string;
@@ -11,8 +12,16 @@ interface SiteSettings {
 export function SettingsPage() {
   const [s, setS] = useState<SiteSettings | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const saved = useRef(""); // what the server holds, as JSON
+  useUnsavedGuard(() => s !== null && JSON.stringify(s) !== saved.current);
   useEffect(() => {
-    api<SiteSettings>("GET", "/content/settings").then(setS, (e) => setMsg({ ok: false, text: errMsg(e) }));
+    api<SiteSettings>("GET", "/content/settings").then(
+      (r) => {
+        saved.current = JSON.stringify(r);
+        setS(r);
+      },
+      (e) => setMsg({ ok: false, text: errMsg(e) }),
+    );
   }, []);
 
   const save = async (e: FormEvent) => {
@@ -20,7 +29,9 @@ export function SettingsPage() {
     if (!s) return;
     setMsg(null);
     try {
-      setS(await api<SiteSettings>("PUT", "/content/settings", s));
+      const r = await api<SiteSettings>("PUT", "/content/settings", s);
+      saved.current = JSON.stringify(r);
+      setS(r);
       setMsg({ ok: true, text: "Saved." });
     } catch (e) {
       setMsg({ ok: false, text: errMsg(e) });

@@ -1,15 +1,36 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, api, can, errMsg, fmtDate, type Item, type MediaItem, type Me } from "./api";
+import { ApiError, altText, api, can, errMsg, fmtDate, mergeById, type Item, type MediaItem, type Me } from "./api";
 import { go, useUnsavedGuard } from "./hooks";
+
+const LIST_PAGE = 50;
 
 export function ContentList({ me, query }: { me: Me; query: string }) {
   const kind = new URLSearchParams(query).get("kind") === "page" ? "page" : "post";
   const [items, setItems] = useState<Item[] | null>(null);
+  const [more, setMore] = useState(false);
   const [err, setErr] = useState("");
   useEffect(() => {
     setItems(null);
-    api<Item[]>("GET", `/content/items?kind=${kind}&limit=200`).then(setItems, (e) => setErr(errMsg(e)));
+    setMore(false);
+    setErr("");
+    api<Item[]>("GET", `/content/items?kind=${kind}&limit=${LIST_PAGE}`).then(
+      (r) => {
+        setItems(r);
+        setMore(r.length === LIST_PAGE);
+      },
+      (e) => setErr(errMsg(e)),
+    );
   }, [kind]);
+  const showMore = () => {
+    if (!items) return;
+    api<Item[]>("GET", `/content/items?kind=${kind}&limit=${LIST_PAGE}&offset=${items.length}`).then(
+      (r) => {
+        setItems((cur) => mergeById(cur ?? [], r));
+        setMore(r.length === LIST_PAGE);
+      },
+      (e) => setErr(errMsg(e)),
+    );
+  };
   const canWrite = can(me, "content.write") || can(me, "content.write.own");
   return (
     <>
@@ -50,6 +71,13 @@ export function ContentList({ me, query }: { me: Me; query: string }) {
           </tbody>
         </table>
       )}
+      {more && (
+        <p>
+          <button type="button" onClick={showMore}>
+            Show more
+          </button>
+        </p>
+      )}
     </>
   );
 }
@@ -85,6 +113,8 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   const [status, setStatus] = useState<"draft" | "published">("draft");
   const [byline, setByline] = useState(() => (isNew && new URLSearchParams(query).get("kind") !== "page" ? lastByline.get() : ""));
   const [loaded, setLoaded] = useState(isNew);
+  // The address the item has on the site now; changing it breaks links to a published item.
+  const [live, setLive] = useState<{ slug: string; published: boolean } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [preview, setPreview] = useState("");
   const [picker, setPicker] = useState(false);
@@ -113,6 +143,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         setBody(it.body_md ?? "");
         setStatus(it.status);
         setByline(it.byline ?? "");
+        setLive({ slug: it.slug, published: it.status === "published" });
         stored.current = snapshot(it.title, it.slug, it.body_md ?? "", it.status, it.byline ?? "");
         version.current = it.version;
         setLoaded(true);
@@ -154,6 +185,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
       if (byline) lastByline.set(byline);
       stored.current = snapshot(title, it.slug, body, status, byline);
       setSlug(it.slug);
+      setLive({ slug: it.slug, published: it.status === "published" });
       setMsg({ ok: true, text: "Saved." });
     } catch (e) {
       // 412: someone saved this item after we opened it. Our text stays in the editor.
@@ -188,7 +220,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
 
   const insert = (m: MediaItem) => {
     if (busy.current) return;
-    const md = `![${m.filename.replace(/[[\]]/g, "")}](${m.url})`;
+    const md = `![${altText(m.filename)}](${m.url})`;
     const el = ta.current;
     const at = el ? el.selectionStart : body.length;
     setBody(body.slice(0, at) + md + body.slice(at));
@@ -213,6 +245,11 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         URL slug (leave empty to generate from the title)
         <input value={slug} onChange={(e) => setSlug(e.target.value)} readOnly={saving} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-post" />
       </label>
+      {live?.published && slug !== "" && slug !== live.slug && (
+        <p className="warn" role="status">
+          This item is published. Changing its address breaks every existing link to it, including search results.
+        </p>
+      )}
       {kind === "post" && (
         <label>
           Author nickname shown on the site (Latin letters, digits, space . _ - ; leave empty to show no author)
@@ -274,20 +311,48 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   );
 }
 
+const PICKER_PAGE = 24;
+
 function MediaPicker({ onPick }: { onPick: (m: MediaItem) => void }) {
   const [items, setItems] = useState<MediaItem[] | null>(null);
+  const [more, setMore] = useState(false);
   useEffect(() => {
-    api<MediaItem[]>("GET", "/media/items?limit=24").then(setItems, () => setItems([]));
+    api<MediaItem[]>("GET", `/media/items?limit=${PICKER_PAGE}`).then(
+      (r) => {
+        setItems(r);
+        setMore(r.length === PICKER_PAGE);
+      },
+      () => setItems([]),
+    );
   }, []);
+  const showMore = () => {
+    if (!items) return;
+    api<MediaItem[]>("GET", `/media/items?limit=${PICKER_PAGE}&offset=${items.length}`).then(
+      (r) => {
+        setItems((cur) => mergeById(cur ?? [], r));
+        setMore(r.length === PICKER_PAGE);
+      },
+      () => setMore(false),
+    );
+  };
   if (!items) return <p className="muted">Loading…</p>;
   if (items.length === 0) return <p className="muted">No images yet. Upload some in Media.</p>;
   return (
-    <div className="grid picker">
-      {items.map((m) => (
-        <button type="button" key={m.id} className="thumb" onClick={() => onPick(m)} title={m.filename}>
-          <img src={m.url} alt={m.filename} loading="lazy" />
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="grid picker">
+        {items.map((m) => (
+          <button type="button" key={m.id} className="thumb" onClick={() => onPick(m)} title={m.filename}>
+            <img src={m.url} alt={m.filename} loading="lazy" />
+          </button>
+        ))}
+      </div>
+      {more && (
+        <p>
+          <button type="button" onClick={showMore}>
+            Show more
+          </button>
+        </p>
+      )}
+    </>
   );
 }

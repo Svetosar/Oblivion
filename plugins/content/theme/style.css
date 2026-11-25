@@ -5,7 +5,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.6 system
 header, main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
 header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
 header .site { font-weight: 700; text-decoration: none; color: inherit; }
-nav a { margin-left: 1rem; }
+header nav a { margin-left: 1rem; display: inline-block; padding: .2rem 0; } /* the pager is a nav too: not indented, and links are tall enough to hit */
 a { color: var(--link); }
 h1 { line-height: 1.2; }
 .entry h2 { margin: 1.5rem 0 0; font-size: 1.3rem; }

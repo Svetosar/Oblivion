@@ -1,17 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errMsg, type Me, type MediaItem } from "./api";
+import { altText, api, errMsg, mergeById, type Me, type MediaItem } from "./api";
 
 const kb = (n: number) => (n < 1024 * 1024 ? (n / 1024).toFixed(0) + " KB" : (n / 1024 / 1024).toFixed(1) + " MB");
 
+const PAGE = 48;
+
 export function MediaPage({ me }: { me: Me }) {
   const [items, setItems] = useState<MediaItem[] | null>(null);
+  const [more, setMore] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    api<MediaItem[]>("GET", "/media/items?limit=200").then(setItems, (e) => setMsg({ ok: false, text: errMsg(e) }));
+    api<MediaItem[]>("GET", `/media/items?limit=${PAGE}`).then(
+      (r) => {
+        setItems(r);
+        setMore(r.length === PAGE);
+      },
+      (e) => setMsg({ ok: false, text: errMsg(e) }),
+    );
   }, []);
   useEffect(load, [load]);
+  const showMore = () => {
+    if (!items) return;
+    api<MediaItem[]>("GET", `/media/items?limit=${PAGE}&offset=${items.length}`).then(
+      (r) => {
+        setItems((cur) => mergeById(cur ?? [], r));
+        setMore(r.length === PAGE);
+      },
+      (e) => setMsg({ ok: false, text: errMsg(e) }),
+    );
+  };
 
   const upload = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -62,7 +81,7 @@ export function MediaPage({ me }: { me: Me }) {
               <span className="muted">
                 {m.width}×{m.height} · {kb(m.size)}
               </span>
-              <input readOnly value={`![${m.filename.replace(/[[\]]/g, "")}](${m.url})`} onFocus={(e) => e.target.select()} aria-label="Markdown" />
+              <input readOnly value={`![${altText(m.filename)}](${m.url})`} onFocus={(e) => e.target.select()} aria-label="Markdown" />
               {(m.uploader_id === me.id || me.perms?.["*"] || me.perms?.["media.manage"]) && (
                 <button className="danger" onClick={() => void remove(m)}>
                   Delete
@@ -72,6 +91,13 @@ export function MediaPage({ me }: { me: Me }) {
           </figure>
         ))}
       </div>
+      {more && (
+        <p>
+          <button type="button" onClick={showMore}>
+            Show more
+          </button>
+        </p>
+      )}
     </>
   );
 }
