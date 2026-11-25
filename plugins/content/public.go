@@ -10,7 +10,6 @@ import (
 	"html/template"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -70,9 +69,9 @@ func (p *Plugin) registerPublic() error {
 	}{
 		{"GET /{$}", p.handleIndex},
 		{"GET /posts/{slug}", p.handlePost},
-		{"GET /posts/{slug}/", redirectNoSlash},
+		{"GET /posts/{slug}/", p.redirectNoSlash("/posts/")},
 		{"GET /{slug}", p.handlePage},
-		{"GET /{slug}/", redirectNoSlash},
+		{"GET /{slug}/", p.redirectNoSlash("/")},
 		{"GET /theme/style.css", handleCSS},
 		{"GET /theme/favicon.svg", handleFavicon},
 		{"GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
@@ -90,16 +89,23 @@ func (p *Plugin) registerPublic() error {
 	return nil
 }
 
-// redirectNoSlash sends /x/ to /x with a permanent redirect: one URL per page.
-func redirectNoSlash(w http.ResponseWriter, r *http.Request) {
-	target := strings.TrimRight(r.URL.Path, "/")
-	if target == "" {
-		target = "/"
+// redirectNoSlash sends prefix+slug+"/" to prefix+slug with a permanent redirect:
+// one URL per page. The target is built from the validated slug, never from the
+// request path: an encoded slash (%2F) decodes inside a wildcard segment, so
+// "/%2Fevil.com/" would otherwise yield "Location: //evil.com", an open redirect.
+func (p *Plugin) redirectNoSlash(prefix string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		if len(slug) > 100 || !slugRe.MatchString(slug) {
+			p.notFound(w, r)
+			return
+		}
+		target := prefix + slug
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	}
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
 func handleFavicon(w http.ResponseWriter, _ *http.Request) {
