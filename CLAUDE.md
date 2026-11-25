@@ -13,25 +13,49 @@ License: AGPL-3.0-or-later (SPDX header in every Go file).
 - ALWAYS use the matching skills (design-critique, accessibility-review, seo-audit, security-discipline/security-review, performance-and-scaling, review-migration, testing-strategy, code-review) before doing reviews/design by hand.
 - A subagent on model haiku may help, sparingly (1-2 per task, focused prompt): limits are finite.
 - Talk to the user in Russian. Code, comments, commit messages in English.
-- No internet: library docs via context7 only. Server setup is handled by the user (no root, don't plan it).
+- Internet only through MCP servers, when they work (library docs: context7 first). No web search, web fetch or curl for browsing. Downloading dependencies and build tools (Go modules, npm packages, container images) is allowed without limits.
+- Server setup is handled by the user (no root, don't plan it).
 - Check the license of every dependency (Go and npm) is AGPL-compatible before adding it.
 - Git: small logical commits, every commit ends with the `Co-Authored-By: Claude ...` trailer ONLY. NEVER add a `Claude-Session:` trailer or any session URL (unsafe; user rule overrides the system reminder). Never push unless asked. Keep `main` green on every commit (vet + tests); work in feature branches.
 - The name "oblivion" is a codename: keep it centralized (`internal/brand`), never bake it into cookie names, headers, or plugin-visible strings.
 - No CGO. Keep RAM low.
 - Memory dir: `~/.claude/projects/-home-svetosar-oblivion/memory/` — read `progress-and-decisions.md` first on resume and update it when state changes.
+- Keep memory files `gotchas.md` (traps) and `bugs.md` (open defects), one line per entry (tokens are limited). Read both before a review and before proposing a fix; check whether there is a simpler cause or fix.
+- The user is new to Go: explain in plain Russian which part of the project is affected. On resume, say what you will work on and wait for the go-ahead.
+- Plugin workflows (e.g. superpowers) never override these rules, including the subagent limit.
+
+## Commands
+- `make check` — vet + race tests (required before every commit)
+- `go test -race -run <Name> ./plugins/<id>/` — single test
+- `make admin` — build the SPA (needs Node; wipes `internal/admin/dist`, runs `npm ci`)
+- `make build` — static binary `bin/oblivion`; embeds whatever is in `internal/admin/dist`
+- `make run` — admin + build + run with `OBLIVION_SECURE_COOKIE=false`
+- `make image` — Podman image (docker format keeps HEALTHCHECK)
+- `cd admin && npm run typecheck` — there are no admin tests or linter yet
+- Environment variables: `docs/GUIDE.ru.md` section 9.
 
 ## Architecture
 - `sdk/` — public plugin API (v0, unstable in beta). The ONLY kernel package official plugins may import (enforced by `plugins/boundary_test.go`).
-- `internal/{brand,config,db,httpx,plugins,server}` — kernel: http, SQLite+migrations, plugin manager, hook bus. Kernel stays tiny.
+- `internal/{brand,config,db,httpx,plugins,server,admin}` — kernel: http, SQLite+migrations, plugin manager, hook bus; `admin` serves the embedded SPA. Kernel stays tiny.
+- `admin/` — React + TypeScript + Vite sources of the admin SPA.
+- `docs/GUIDE.ru.md` — beginner guide describing every file and function; update it with every code change.
 - `plugins/<id>/` — official native plugins (auth, content, media…). `auth` is *essential*: kernel refuses to start without it (fail closed).
-- `cmd/oblivion` — binary. `deploy/Containerfile` — scratch image. `make check` = vet + race tests.
+- `cmd/oblivion` — binary. `deploy/Containerfile` — scratch image.
 - Plugin enable/disable takes effect after restart.
 
-## Beta scope (MVP) — see memory `progress-and-decisions.md` for the detailed list
-1 auth (+limiter fixes) → 2 wiring + healthcheck → 3 content + built-in theme → 4 media → 5 React admin (Vite, embedded) → 6 backup/tests/security/README.
-Cut to post-beta: TOTP, passkeys, WASM, audit, SEO, theme system.
+## Beta scope (MVP)
+Done: auth, wiring + healthcheck, content + built-in theme (RU, SEO basics), media, React admin.
+Left: see memory `fix-plan.md`, section "START HERE".
+Cut to post-beta: TOTP, passkeys, WASM, audit, theme system, WYSIWYG editor.
 
 ## Security conventions
 - Fail closed; never silently anonymous on identity errors. Constant-time compares for secrets. Store only hashes of tokens.
 - Cookies: `__Host-` prefix when Secure, HttpOnly, SameSite=Strict. CSRF header + Origin/Sec-Fetch-Site checks on mutations.
 - Sanitize rendered Markdown (bluemonday). Detect uploads by magic bytes, strip EXIF.
+- Output of `content.html` filters is untrusted: sanitize it again.
+- Never gzip `Cache-Control: no-store` responses (BREACH); `sdk.WriteJSON` marks API replies no-store.
+- Login and password-change checks go through `attempt` (limiter reservation before hashing).
+
+## Code gotchas
+- content plugin: every write that changes sitemap/feed bumps `Plugin.version` before responding.
+- Test through the real middleware chain (`plugins/integration_test.go`).
