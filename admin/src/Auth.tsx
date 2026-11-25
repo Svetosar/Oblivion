@@ -27,7 +27,7 @@ function Form({ title, children, onSubmit, submit, error, busy }: {
   );
 }
 
-export function Login({ onDone }: { onDone: (s: Session) => void }) {
+export function Login({ onDone, note }: { onDone: (s: Session) => void; note?: string }) {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
@@ -45,6 +45,7 @@ export function Login({ onDone }: { onDone: (s: Session) => void }) {
   };
   return (
     <Form title="Sign in" onSubmit={() => void submit()} submit="Sign in" error={err} busy={busy}>
+      {note && <p className="warn" role="alert">{note}</p>}
       <label>
         Username
         <input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" autoFocus required />

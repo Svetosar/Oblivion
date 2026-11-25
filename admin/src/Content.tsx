@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, can, errMsg, fmtDate, type Item, type MediaItem, type Me } from "./api";
-import { go } from "./hooks";
+import { go, useUnsavedGuard } from "./hooks";
 
 export function ContentList({ me, query }: { me: Me; query: string }) {
   const kind = new URLSearchParams(query).get("kind") === "page" ? "page" : "post";
@@ -54,6 +54,9 @@ export function ContentList({ me, query }: { me: Me; query: string }) {
   );
 }
 
+// Everything Save sends, as one comparable string.
+const snapshot = (title: string, slug: string, body: string, status: string) => JSON.stringify([title, slug, body, status]);
+
 export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew: string; query: string; onKind: (k: "post" | "page") => void }) {
   const isNew = idOrNew === "new";
   const [kind, setKind] = useState<"post" | "page">(new URLSearchParams(query).get("kind") === "page" ? "page" : "post");
@@ -67,6 +70,12 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   const [picker, setPicker] = useState(false);
   const [tab, setTab] = useState<"write" | "preview">("write"); // small screens show one pane at a time
   const ta = useRef<HTMLTextAreaElement>(null);
+  const [saving, setSaving] = useState(false);
+  const busy = useRef(false); // set at once, unlike state: blocks a second submit
+  // What the server holds. Refs, so that navigation right after Save sees the new value.
+  const stored = useRef(snapshot("", "", "", "draft"));
+  const draft = snapshot(title, slug, body, status);
+  useUnsavedGuard(() => draft !== stored.current);
 
   useEffect(() => {
     onKind(kind);
@@ -81,6 +90,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         setSlug(it.slug);
         setBody(it.body_md ?? "");
         setStatus(it.status);
+        stored.current = snapshot(it.title, it.slug, it.body_md ?? "", it.status);
         setLoaded(true);
       },
       (e) => setMsg({ ok: false, text: errMsg(e) }),
@@ -102,25 +112,33 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true); // fields are read-only meanwhile, so nothing typed gets lost
     setMsg(null);
     try {
       if (isNew) {
         const it = await api<Item>("POST", "/content/items", { kind, title, slug, body_md: body, status });
+        stored.current = draft;
         go(`/content/${it.id}`);
-      } else {
-        const it = await api<Item>("PUT", `/content/items/${idOrNew}`, { title, slug, body_md: body, status });
-        setSlug(it.slug);
-        setMsg({ ok: true, text: "Saved." });
+        return; // stay busy until the editor of the new item replaces this one
       }
+      const it = await api<Item>("PUT", `/content/items/${idOrNew}`, { title, slug, body_md: body, status });
+      stored.current = snapshot(title, it.slug, body, status);
+      setSlug(it.slug);
+      setMsg({ ok: true, text: "Saved." });
     } catch (e) {
       setMsg({ ok: false, text: errMsg(e) });
     }
+    busy.current = false;
+    setSaving(false);
   };
 
   const remove = async () => {
     if (!confirm("Delete this permanently?")) return;
     try {
       await api("DELETE", `/content/items/${idOrNew}`);
+      stored.current = draft; // already confirmed: do not ask again
       go(`/content?kind=${kind}`);
     } catch (e) {
       setMsg({ ok: false, text: errMsg(e) });
@@ -128,6 +146,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   };
 
   const insert = (m: MediaItem) => {
+    if (busy.current) return;
     const md = `![${m.filename.replace(/[[\]]/g, "")}](${m.url})`;
     const el = ta.current;
     const at = el ? el.selectionStart : body.length;
@@ -147,11 +166,11 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
       </div>
       <label>
         Title
-        <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} readOnly={saving} required maxLength={200} />
       </label>
       <label>
         URL slug (leave empty to generate from the title)
-        <input value={slug} onChange={(e) => setSlug(e.target.value)} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-post" />
+        <input value={slug} onChange={(e) => setSlug(e.target.value)} readOnly={saving} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-post" />
       </label>
       <div className="row">
         <div className="tabs" role="group" aria-label="Editor view">
@@ -169,14 +188,14 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
       </div>
       {picker && <MediaPicker onPick={insert} />}
       <div className={"editor tab-" + tab}>
-        <textarea ref={ta} value={body} onChange={(e) => setBody(e.target.value)} rows={22} spellCheck aria-label="Markdown" />
+        <textarea ref={ta} value={body} onChange={(e) => setBody(e.target.value)} readOnly={saving} rows={22} spellCheck aria-label="Markdown" />
         {/* The HTML below was produced and sanitized by the server (goldmark + bluemonday). */}
         <div className="preview body" dangerouslySetInnerHTML={{ __html: preview }} />
       </div>
       <div className="row">
         <label className="inline">
           Status{" "}
-          <select value={status} onChange={(e) => setStatus(e.target.value as "draft" | "published")}>
+          <select value={status} disabled={saving} onChange={(e) => setStatus(e.target.value as "draft" | "published")}>
             <option value="draft">Draft</option>
             <option value="published" disabled={!canPublish}>
               Published
@@ -190,7 +209,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
             Delete
           </button>
         )}
-        <button className="primary">Save</button>
+        <button className="primary" aria-disabled={saving}>{saving ? "Saving…" : "Save"}</button>
       </div>
       {msg && <p className={msg.ok ? "ok" : "error"} role="alert">{msg.text}</p>}
     </form>

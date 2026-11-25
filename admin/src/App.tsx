@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, can, errMsg, onUnauthorized, setCsrf, type Session } from "./api";
-import { go, useHash } from "./hooks";
+import { dropUnsaved, go, hasUnsaved, mayLeave, useHash } from "./hooks";
 import { Login, Setup } from "./Auth";
 import { ContentEditor, ContentList } from "./Content";
 import { MediaPage } from "./Media";
@@ -12,6 +12,9 @@ type State = "loading" | "login" | "setup" | { error: string } | Session;
 
 export function App() {
   const [state, setState] = useState<State>("loading");
+  // The session ended while a page held unsaved work: ask to sign in again, but
+  // keep that page (hidden) so the text survives.
+  const [expired, setExpired] = useState(false);
 
   const probe = useCallback(async () => {
     try {
@@ -30,7 +33,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    onUnauthorized(() => setState("login"));
+    // With nothing to lose, drop the whole admin: no old data stays in the page.
+    onUnauthorized(() => (hasUnsaved() ? setExpired(true) : setState("login")));
     void probe();
   }, [probe]);
 
@@ -39,6 +43,28 @@ export function App() {
     // Refresh to get the permission map, which login/setup responses do not carry.
     void probe();
     go("/");
+  };
+
+  const reentered = async (previousUser: number, s: Session) => {
+    setCsrf(s.csrf);
+    let full: Session;
+    try {
+      full = await api<Session>("GET", "/auth/me");
+    } catch {
+      return; // stay on the sign-in form; submitting it again retries
+    }
+    if (full.user.id !== previousUser) {
+      dropUnsaved(); // someone else must not see or inherit that text
+      go("/");
+    }
+    setCsrf(full.csrf);
+    setState(full);
+    setExpired(false);
+  };
+
+  const loggedOut = () => {
+    setExpired(false);
+    setState("login");
   };
 
   if (state === "loading") return <p className="center muted">Loading…</p>;
@@ -51,7 +77,15 @@ export function App() {
     );
   if (state === "setup") return <Setup onDone={entered} />;
   if (state === "login") return <Login onDone={entered} />;
-  return <Shell session={state} onLogout={() => setState("login")} />;
+  const userId = state.user.id;
+  return (
+    <>
+      {expired && <Login note="Your session ended. Sign in again; unsaved text is kept." onDone={(s) => void reentered(userId, s)} />}
+      <div hidden={expired}>
+        <Shell key={userId} session={state} onLogout={loggedOut} />
+      </div>
+    </>
+  );
 }
 
 function Shell({ session, onLogout }: { session: Session; onLogout: () => void }) {
@@ -64,6 +98,8 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   const parts = path.split("/").filter(Boolean);
 
   const logout = async () => {
+    if (!mayLeave()) return;
+    dropUnsaved();
     try {
       await api("POST", "/auth/logout");
     } finally {
