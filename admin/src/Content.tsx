@@ -55,7 +55,26 @@ export function ContentList({ me, query }: { me: Me; query: string }) {
 }
 
 // Everything Save sends, as one comparable string.
-const snapshot = (title: string, slug: string, body: string, status: string) => JSON.stringify([title, slug, body, status]);
+const snapshot = (title: string, slug: string, body: string, status: string, byline: string) => JSON.stringify([title, slug, body, status, byline]);
+
+// The nickname last used, offered again for the next article. Only a convenience:
+// storage may be blocked, and the server decides what is acceptable.
+const lastByline = {
+  get: () => {
+    try {
+      return localStorage.getItem("byline") ?? "";
+    } catch {
+      return "";
+    }
+  },
+  set: (v: string) => {
+    try {
+      localStorage.setItem("byline", v);
+    } catch {
+      /* ignore */
+    }
+  },
+};
 
 export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew: string; query: string; onKind: (k: "post" | "page") => void }) {
   const isNew = idOrNew === "new";
@@ -64,6 +83,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   const [slug, setSlug] = useState("");
   const [body, setBody] = useState("");
   const [status, setStatus] = useState<"draft" | "published">("draft");
+  const [byline, setByline] = useState(() => (isNew && new URLSearchParams(query).get("kind") !== "page" ? lastByline.get() : ""));
   const [loaded, setLoaded] = useState(isNew);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [preview, setPreview] = useState("");
@@ -75,8 +95,8 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   const [stale, setStale] = useState(false); // the server holds a newer version than ours
   const busy = useRef(false); // set at once, unlike state: blocks a second submit
   // What the server holds. Refs, so that navigation right after Save sees the new value.
-  const stored = useRef(snapshot("", "", "", "draft"));
-  const draft = snapshot(title, slug, body, status);
+  const stored = useRef(snapshot("", "", "", "draft", isNew ? byline : ""));
+  const draft = snapshot(title, slug, body, status, byline);
   useUnsavedGuard(() => draft !== stored.current);
 
   useEffect(() => {
@@ -92,7 +112,8 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         setSlug(it.slug);
         setBody(it.body_md ?? "");
         setStatus(it.status);
-        stored.current = snapshot(it.title, it.slug, it.body_md ?? "", it.status);
+        setByline(it.byline ?? "");
+        stored.current = snapshot(it.title, it.slug, it.body_md ?? "", it.status, it.byline ?? "");
         version.current = it.version;
         setLoaded(true);
       },
@@ -122,14 +143,16 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
     setStale(false);
     try {
       if (isNew) {
-        const it = await api<Item>("POST", "/content/items", { kind, title, slug, body_md: body, status });
+        const it = await api<Item>("POST", "/content/items", { kind, title, slug, body_md: body, status, byline });
+        if (byline) lastByline.set(byline);
         stored.current = draft;
         go(`/content/${it.id}`);
         return; // stay busy until the editor of the new item replaces this one
       }
-      const it = await api<Item>("PUT", `/content/items/${idOrNew}`, { title, slug, body_md: body, status, version: version.current });
+      const it = await api<Item>("PUT", `/content/items/${idOrNew}`, { title, slug, body_md: body, status, byline, version: version.current });
       version.current = it.version;
-      stored.current = snapshot(title, it.slug, body, status);
+      if (byline) lastByline.set(byline);
+      stored.current = snapshot(title, it.slug, body, status, byline);
       setSlug(it.slug);
       setMsg({ ok: true, text: "Saved." });
     } catch (e) {
@@ -190,6 +213,12 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         URL slug (leave empty to generate from the title)
         <input value={slug} onChange={(e) => setSlug(e.target.value)} readOnly={saving} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="my-post" />
       </label>
+      {kind === "post" && (
+        <label>
+          Author nickname shown on the site (Latin letters, digits, space . _ - ; leave empty to show no author)
+          <input value={byline} onChange={(e) => setByline(e.target.value)} readOnly={saving} pattern="[A-Za-z0-9][A-Za-z0-9 ._\-]{1,31}" maxLength={32} placeholder="Marina K." autoComplete="off" />
+        </label>
+      )}
       <div className="row">
         <div className="tabs" role="group" aria-label="Editor view">
           <button type="button" aria-pressed={tab === "write"} onClick={() => setTab("write")}>

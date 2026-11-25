@@ -53,6 +53,7 @@ export interface Item {
   body_md?: string;
   status: "draft" | "published";
   version: number; // counts saves; updates must send the one that was loaded
+  byline: string; // the author's nickname shown on the site; the login (author_name) is never public
   author_name: string;
   updated_at: number;
   published_at: number | null;
