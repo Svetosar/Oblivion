@@ -271,7 +271,7 @@ func (p *Plugin) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ik, uk := ipKey(p.clientIP(r)), userKey(in.Username)
-	att := p.begin(w, ik, uk)
+	att := p.begin(w, r, ik, uk)
 	if att == nil {
 		return
 	}
@@ -366,7 +366,7 @@ func (p *Plugin) handlePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ik, uk := ipKey(p.clientIP(r)), userKey(s.principal.Username)
-	att := p.begin(w, ik, uk)
+	att := p.begin(w, r, ik, uk)
 	if att == nil {
 		return
 	}

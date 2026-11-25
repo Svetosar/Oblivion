@@ -5,9 +5,14 @@ package httpx
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
+	"sync"
 	"time"
+
+	"oblivion/internal/brand"
 )
 
 // SecurityHeaders sets a strict baseline of response headers.
@@ -70,14 +75,54 @@ func (s *statusWriter) WriteHeader(code int) { s.status = code; s.ResponseWriter
 func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // AccessLog logs method, path and status. Privacy: no IP, no query string,
-// no User-Agent, no Referer are written.
+// no User-Agent, no Referer are written. A successful /healthz is not logged: the
+// container healthcheck calls it every 30 seconds and would bury everything else.
 func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(sw, r)
+			if r.URL.Path == "/healthz" && sw.status == http.StatusOK {
+				return
+			}
 			log.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", time.Since(start).Milliseconds())
+		})
+	}
+}
+
+// ForwardedHint warns, once, when a request carries a forwarding header
+// (X-Forwarded-For, Forwarded, X-Real-IP) from a peer that is not a trusted proxy.
+// Without OBLIVION_TRUSTED_PROXIES every visitor behind a reverse proxy looks like
+// the proxy itself, and the sign-in limiter would lock all of them out together.
+// The warning names the setting and no address.
+func ForwardedHint(log *slog.Logger, trusted []netip.Prefix) func(http.Handler) http.Handler {
+	var once sync.Once
+	isTrusted := func(a netip.Addr) bool {
+		for _, p := range trusted {
+			if p.Contains(a.Unmap()) {
+				return true
+			}
+		}
+		return false
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := r.Header
+			if h.Get("X-Forwarded-For") != "" || h.Get("Forwarded") != "" || h.Get("X-Real-IP") != "" {
+				host, _, err := net.SplitHostPort(r.RemoteAddr)
+				if err != nil {
+					host = r.RemoteAddr
+				}
+				if peer, err := netip.ParseAddr(host); err != nil || !isTrusted(peer) {
+					once.Do(func() {
+						log.Warn("requests arrive with forwarding headers from a peer that is not a trusted proxy: " +
+							"if a reverse proxy runs in front, set " + brand.EnvPrefix + "TRUSTED_PROXIES to its address, " +
+							"otherwise all visitors look like one client and sign-in limits will hit everybody at once")
+					})
+				}
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

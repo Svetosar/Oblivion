@@ -5,6 +5,7 @@ package auth
 import (
 	"net/http"
 	"sync"
+	"time"
 )
 
 // perNetHashes is how many password checks one client network may have in
@@ -50,13 +51,23 @@ type attempt struct {
 }
 
 // begin answers 429 and returns nil when the attempt must not run.
-func (p *Plugin) begin(w http.ResponseWriter, ik, uk string) *attempt {
-	if d := p.ipLimit.reserve(ik); d > 0 {
+//
+// A block is logged once, when it first refuses somebody: the client address for
+// a network block (what fail2ban needs) and no address and no username for a
+// throttled username, which nobody in particular is to blame for.
+func (p *Plugin) begin(w http.ResponseWriter, r *http.Request, ik, uk string) *attempt {
+	if d, first := p.ipLimit.reserve(ik); d > 0 {
+		if first {
+			p.h.Log().Warn("sign-in blocked", "kind", "network", "client", p.clientIP(r), "retry_after", d.Round(time.Second).String())
+		}
 		tooMany(w, d)
 		return nil
 	}
-	if d := p.userLimit.reserve(uk); d > 0 {
+	if d, first := p.userLimit.reserve(uk); d > 0 {
 		p.ipLimit.refund(ik)
+		if first {
+			p.h.Log().Warn("sign-in blocked", "kind", "username", "retry_after", d.Round(time.Second).String())
+		}
 		tooMany(w, d)
 		return nil
 	}

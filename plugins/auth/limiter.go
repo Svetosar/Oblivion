@@ -26,9 +26,10 @@ type limiter struct {
 }
 
 type entry struct {
-	fails int
-	last  time.Time
-	until time.Time
+	fails     int
+	last      time.Time
+	until     time.Time
+	announced bool // the current lockout has been reported once
 }
 
 func newLimiter(free int, base, cap, window time.Duration) *limiter {
@@ -72,6 +73,9 @@ func (l *limiter) failLocked(key string, now time.Time) {
 			d = l.cap
 		}
 		e.until = now.Add(d)
+		if d := e.until.Sub(now); d > 0 && e.fails == l.free+1 {
+			e.announced = false // a new lockout begins
+		}
 	}
 }
 
@@ -79,17 +83,22 @@ func (l *limiter) failLocked(key string, now time.Time) {
 // in advance. Concurrent requests therefore cannot all slip past check before
 // any of them has been recorded as failed. Returns 0 when reserved, else the
 // wait. A reservation that turns out to be a success is returned with refund.
-func (l *limiter) reserve(key string) time.Duration {
+//
+// first is true for the first refusal of a lockout, so that it can be reported
+// once instead of once per blocked request.
+func (l *limiter) reserve(key string) (wait time.Duration, first bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	if e := l.entries[key]; e != nil {
 		if d := e.until.Sub(now); d > 0 {
-			return d
+			first = !e.announced
+			e.announced = true
+			return d, first
 		}
 	}
 	l.failLocked(key, now)
-	return 0
+	return 0, false
 }
 
 // refund takes back one reservation (the attempt did not fail). It does not

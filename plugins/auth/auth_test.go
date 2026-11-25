@@ -31,10 +31,11 @@ const (
 )
 
 type env struct {
-	t   *testing.T
-	p   *Plugin
-	h   http.Handler
-	now time.Time
+	t    *testing.T
+	p    *Plugin
+	h    http.Handler
+	now  time.Time
+	logs *bytes.Buffer // what the plugin logged
 }
 
 func newEnv(t *testing.T) *env {
@@ -44,9 +45,9 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
-	e := &env{t: t, p: New(), now: time.Unix(1_800_000_000, 0)}
+	e := &env{t: t, p: New(), now: time.Unix(1_800_000_000, 0), logs: &bytes.Buffer{}}
 	e.p.now = func() time.Time { return e.now }
-	m := plugins.New(slog.New(slog.NewTextHandler(io.Discard, nil)), d, "auth")
+	m := plugins.New(slog.New(slog.NewTextHandler(e.logs, nil)), d, "auth")
 	m.SetRuntime(sdk.Runtime{ClientIP: func(r *http.Request) string { return r.Header.Get("X-Test-IP") }})
 	m.Register(e.p)
 	if err := m.Start(context.Background()); err != nil {
@@ -627,7 +628,7 @@ func TestLimiterReserveIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if l.reserve("k") == 0 {
+			if d, _ := l.reserve("k"); d == 0 {
 				granted.Add(1)
 			}
 		}()
@@ -643,7 +644,7 @@ func TestLimiterRefund(t *testing.T) {
 	l := newLimiter(2, time.Minute, time.Hour, time.Hour)
 	l.reserve("k")
 	l.reserve("k")
-	if l.reserve("k") != 0 { // third attempt: allowed, and it starts the lockout
+	if d, _ := l.reserve("k"); d != 0 { // third attempt: allowed, and it starts the lockout
 		t.Fatal("third attempt must be allowed")
 	}
 	if l.check("k") == 0 {

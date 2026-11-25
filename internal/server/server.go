@@ -47,6 +47,7 @@ func New(cfg config.Config, log *slog.Logger, d *sql.DB, mgr *plugins.Manager) *
 		httpx.SecurityHeaders(cfg.SecureCookie),
 		httpx.Recover(log),
 		httpx.AccessLog(log),
+		httpx.ForwardedHint(log, cfg.TrustedProxies),
 		httpx.Gzip,
 		bodyLimit(cfg.MaxBodyBytes, mgr),
 		mgr.IdentityMiddleware,
