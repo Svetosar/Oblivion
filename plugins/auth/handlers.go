@@ -513,6 +513,17 @@ func userID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 
 const errLastAdmin = "cannot remove, disable or demote the last active administrator"
 
+// guardedUpdateSQL changes role (?1) and disabled (?2) of user ?3, either may be
+// NULL = unchanged. The guard is in the statement itself, so it holds even when
+// two administrators demote each other at the same moment, and the HTTP handler
+// and the command line share it.
+const guardedUpdateSQL = `
+	UPDATE auth_users SET role = COALESCE(?1, role), disabled = COALESCE(?2, disabled)
+	WHERE id = ?3 AND (
+	      (COALESCE(?1, role) = 'admin' AND COALESCE(?2, disabled) = 0)
+	   OR role <> 'admin' OR disabled = 1
+	   OR EXISTS (SELECT 1 FROM auth_users o WHERE o.id <> ?3 AND o.role = 'admin' AND o.disabled = 0))`
+
 func (p *Plugin) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if !requireManage(w, r) {
 		return
@@ -571,13 +582,7 @@ func (p *Plugin) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	// The last-admin guard lives inside the UPDATE itself, so it is atomic even
 	// when two administrators demote each other concurrently.
-	res, err := tx.ExecContext(r.Context(), `
-		UPDATE auth_users SET role = COALESCE(?1, role), disabled = COALESCE(?2, disabled)
-		WHERE id = ?3 AND (
-		      (COALESCE(?1, role) = 'admin' AND COALESCE(?2, disabled) = 0)
-		   OR role <> 'admin' OR disabled = 1
-		   OR EXISTS (SELECT 1 FROM auth_users o WHERE o.id <> ?3 AND o.role = 'admin' AND o.disabled = 0))`,
-		in.Role, dis, id)
+	res, err := tx.ExecContext(r.Context(), guardedUpdateSQL, in.Role, dis, id)
 	if err != nil {
 		p.internalErr(w, "update user", err)
 		return

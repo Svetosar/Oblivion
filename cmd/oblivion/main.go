@@ -44,6 +44,8 @@ func run() error {
 			return healthcheck(cfg)
 		case "backup":
 			return runBackup(cfg, os.Args[2:])
+		case "user":
+			return runUser(cfg, os.Args[2:])
 		default:
 			return fmt.Errorf("unknown command %q", os.Args[1])
 		}

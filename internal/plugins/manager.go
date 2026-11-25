@@ -334,12 +334,24 @@ func (m *Manager) startOne(ctx context.Context, p sdk.Plugin) (err error) {
 		m.bodyLimits[mf.ID] = mf.MaxBodyBytes
 		m.mu.Unlock()
 	}
-	if mf.Migrations != nil {
-		if err := db.Migrate(ctx, m.db, mf.Migrations, "plugin_"+mf.ID+"_migrations"); err != nil {
-			return fmt.Errorf("migrations: %w", err)
-		}
+	if err := MigratePlugin(ctx, m.db, p); err != nil {
+		return err
 	}
 	return p.Init(ctx, h)
+}
+
+// MigratePlugin applies the migrations a plugin declares in its manifest. Start
+// uses it for every plugin; tools that must have a schema without starting the
+// server (account management on a fresh volume) call it directly.
+func MigratePlugin(ctx context.Context, d *sql.DB, p sdk.Plugin) error {
+	mf := p.Manifest()
+	if mf.Migrations == nil {
+		return nil
+	}
+	if err := db.Migrate(ctx, d, mf.Migrations, "plugin_"+mf.ID+"_migrations"); err != nil {
+		return fmt.Errorf("migrations: %w", err)
+	}
+	return nil
 }
 
 // Close shuts plugins down in reverse init order.
