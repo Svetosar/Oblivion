@@ -55,9 +55,41 @@ func (fakeIdentity) Authenticate(r *http.Request) (*sdk.Principal, error) {
 	return &sdk.Principal{UserID: id, Username: name, Roles: []string{role}, Perms: perms}, nil
 }
 
+// fakeAccounts is the "accounts" service of the auth plugin: a name is taken when
+// it equals a login after lower-casing and dropping separators. The real, much
+// stricter comparison is tested in the auth plugin.
+type fakeAccounts struct {
+	mu     sync.Mutex
+	logins map[string]bool
+	err    error // makes every answer fail
+}
+
+func (*fakeAccounts) Manifest() sdk.Manifest {
+	return sdk.Manifest{ID: "fakeacc", Name: "fake", Version: "0", APIVersion: sdk.APIVersion, Provides: []string{sdk.ServiceAccounts}}
+}
+func (f *fakeAccounts) Init(_ context.Context, h sdk.Host) error {
+	return h.Provide(sdk.ServiceAccounts, f)
+}
+func (f *fakeAccounts) NameTaken(_ context.Context, name string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return true, f.err
+	}
+	n := strings.ToLower(strings.NewReplacer(" ", "", ".", "", "_", "", "-", "").Replace(name))
+	return f.logins[n], nil
+}
+
+func (f *fakeAccounts) add(login string) {
+	f.mu.Lock()
+	f.logins[strings.ToLower(login)] = true
+	f.mu.Unlock()
+}
+
 type env struct {
 	t   *testing.T
 	p   *Plugin
+	acc *fakeAccounts
 	h   http.Handler // API + public, behind identity
 	now time.Time
 }
@@ -90,10 +122,11 @@ func newEnvWith(t *testing.T, extra ...sdk.Plugin) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
-	e := &env{t: t, p: New(), now: time.Unix(1_800_000_000, 0)}
+	e := &env{t: t, p: New(), now: time.Unix(1_800_000_000, 0), acc: &fakeAccounts{logins: map[string]bool{"admin": true, "root": true, "ed": true, "alice": true, "bob": true}}}
 	e.p.now = func() time.Time { return e.now }
 	m := plugins.New(slog.New(slog.NewTextHandler(io.Discard, nil)), d)
 	m.Register(fakeIdentity{})
+	m.Register(e.acc)
 	m.Register(e.p)
 	for _, x := range extra {
 		m.Register(x)
@@ -443,11 +476,11 @@ func (e *env) get(path, acceptLang string) *httptest.ResponseRecorder {
 
 func TestDefaultsAreRussianAndSafeWithoutBaseURL(t *testing.T) {
 	e := newEnv(t)
-	e.create(editor, "post", "Первый пост", "published", map[string]any{"body_md": "# Раздел\n\nТекст поста."})
+	e.create(editor, "post", "Первый пост", "published", map[string]any{"body_md": "# Раздел\n\nТекст поста.", "byline": "Ed Writer"})
 	w := e.get("/posts/pervyy-post", "")
 	want(t, w, 200)
 	b := w.Body.String()
-	for _, need := range []string{`<html lang="ru">`, "<title>Первый пост — Мой сайт</title>", `<meta name="description" content="Текст поста.">`, `<article lang="ru">`, "Автор: ed"} {
+	for _, need := range []string{`<html lang="ru">`, "<title>Первый пост — Мой сайт</title>", `<meta name="description" content="Текст поста.">`, `<article lang="ru">`, "Автор: Ed Writer"} {
 		if !strings.Contains(b, need) {
 			t.Errorf("missing %q in:\n%s", need, b)
 		}
@@ -482,7 +515,7 @@ func TestHeadMetadataWithBaseURL(t *testing.T) {
 	e := newEnv(t)
 	e.setBase("https://example.com/")
 	e.create(editor, "post", "Заметка про море", "published", map[string]any{
-		"body_md": "Описание поста.\n\n![волна](/media/0123456789abcdef0123456789abcdef.png)", "slug": "more"})
+		"body_md": "Описание поста.\n\n![волна](/media/0123456789abcdef0123456789abcdef.png)", "slug": "more", "byline": "Ed Writer"})
 	e.create(editor, "page", "О сайте", "published", map[string]any{"slug": "about"})
 
 	b := e.get("/posts/more", "").Body.String()
@@ -509,7 +542,7 @@ func TestHeadMetadataWithBaseURL(t *testing.T) {
 		post["inLanguage"] != "ru" || post["datePublished"] == nil {
 		t.Errorf("JSON-LD: %v", post)
 	}
-	if a, _ := post["author"].(map[string]any); a["name"] != "ed" {
+	if a, _ := post["author"].(map[string]any); a["name"] != "Ed Writer" {
 		t.Errorf("author: %v", post["author"])
 	}
 

@@ -37,6 +37,7 @@ type pageData struct {
 	Newer       string
 	Older       string
 	Item        *itemView
+	Byline      string        // the nickname to publish with a post, or ""
 	Body        template.HTML // sanitized when saved (see renderMarkdown)
 
 	// filled in by render
@@ -217,7 +218,9 @@ func (p *Plugin) structuredData(d pageData, st settings, abs func(string) string
 			ld["@type"] = "BlogPosting"
 			ld["headline"] = it.Title
 			ld["mainEntityOfPage"] = abs(d.Path)
-			ld["author"] = map[string]any{"@type": "Person", "name": it.AuthorName}
+			if d.Byline != "" {
+				ld["author"] = map[string]any{"@type": "Person", "name": d.Byline}
+			}
 			if it.PublishedAt != nil {
 				ld["datePublished"] = isoDate(*it.PublishedAt)
 			}
@@ -328,7 +331,7 @@ func (p *Plugin) showPublished(w http.ResponseWriter, r *http.Request, kind, slu
 	}
 	p.render(w, r, http.StatusOK, tplSingle, pageData{
 		PageTitle: it.Title, Description: excerpt(lead, 160), Path: path, OGType: ogType, OGImage: og,
-		Item: &it, Body: template.HTML(body),
+		Item: &it, Byline: p.publicByline(r, &it), Body: template.HTML(body),
 	})
 }
 

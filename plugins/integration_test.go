@@ -150,6 +150,30 @@ func TestWholeSystem(t *testing.T) {
 	resp, b = do("POST", "/api/v1/content/items", js(post), "application/json", nil)
 	expect(resp, b, 201)
 
+	// The public author is a nickname. With the real auth plugin behind the
+	// content plugin, no spelling of a login gets through, and the login is
+	// never published.
+	for _, nick := range []string{"admin", "ADMIN", "a.d.m.i.n", "adm1n", "Ivan admin", "Иван"} {
+		bad := map[string]any{"kind": "post", "title": "x", "slug": "x", "status": "draft", "body_md": "x", "byline": nick}
+		resp, b = do("POST", "/api/v1/content/items", js(bad), "application/json", nil)
+		if resp.StatusCode != 400 {
+			t.Errorf("nickname %q: status %d, want 400: %.200s", nick, resp.StatusCode, b)
+		}
+	}
+	signed := map[string]any{"kind": "post", "title": "Подписанный", "slug": "signed", "status": "published", "body_md": "Текст.", "byline": "Marina K."}
+	resp, b = do("POST", "/api/v1/content/items", js(signed), "application/json", nil)
+	expect(resp, b, 201)
+	resp, b = do("GET", "/posts/signed", nil, "", nil)
+	expect(resp, b, 200)
+	if !strings.Contains(string(b), "Marina K.") || strings.Contains(string(b), ">admin<") || strings.Contains(string(b), `"admin"`) {
+		t.Errorf("the public post must show the nickname and never the login:\n%s", b)
+	}
+	resp, b = do("GET", "/posts/more", nil, "", nil)
+	expect(resp, b, 200)
+	if strings.Contains(string(b), "admin") {
+		t.Errorf("a post without a nickname names the login:\n%s", b)
+	}
+
 	// 3. A reader (no cookies, Russian browser, gzip) opens the post.
 	reader := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 	req, _ := http.NewRequest("GET", ts.URL+"/posts/more", nil)

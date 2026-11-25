@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +34,7 @@ type Plugin struct {
 	now func() time.Time
 	st  settingsStore
 
+	acc     sdk.Accounts // answers whether a nickname is a login; required
 	version atomic.Int64 // bumped by every write that can change a public document
 	docs    docCache
 }
@@ -47,6 +49,7 @@ func (p *Plugin) Manifest() sdk.Manifest {
 		APIVersion:   sdk.APIVersion,
 		Description:  "Posts and pages in Markdown with a built-in public theme",
 		Capabilities: []sdk.Capability{sdk.CapDB, sdk.CapKV, sdk.CapHTTPAPI, sdk.CapHTTPPublic},
+		Requires:     []string{sdk.ServiceAccounts},
 		Permissions:  []string{permRead, permWrite, permWriteOwn, permPublish, permSettings},
 		Migrations:   migrationsFS,
 	}
@@ -61,6 +64,15 @@ func (p *Plugin) Init(ctx context.Context, h sdk.Host) error {
 		return err
 	}
 	p.h = h
+	svc, err := h.Service(sdk.ServiceAccounts)
+	if err != nil {
+		return err
+	}
+	acc, ok := svc.(sdk.Accounts)
+	if !ok {
+		return errors.New("content: the accounts service does not implement sdk.Accounts")
+	}
+	p.acc = acc
 	if err := p.backfillDerived(ctx); err != nil {
 		return err
 	}

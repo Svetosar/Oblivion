@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -35,6 +36,9 @@ type itemView struct {
 	PublishedAt *int64 `json:"published_at"`
 	// Version counts saves, starting at 1. Updates must send the one they loaded.
 	Version int64 `json:"version"`
+	// Byline is the author's nickname shown on the site ("" = none). The account
+	// name (AuthorName) is for the admin only and is never published.
+	Byline string `json:"byline"`
 }
 
 func (p *Plugin) registerAPI() error {
@@ -79,7 +83,7 @@ func canWrite(pr *sdk.Principal, authorID int64) bool {
 
 func validKind(k string) bool { return k == "post" || k == "page" }
 
-const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at, version`
+const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at, version, byline`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -88,7 +92,7 @@ func scanItem(s scanner, extra ...any) (itemView, error) {
 	var it itemView
 	var pub sql.NullInt64
 	err := s.Scan(append([]any{&it.ID, &it.Kind, &it.Slug, &it.Title, &it.BodyMD, &it.BodyHTML, &it.Status,
-		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub, &it.Version}, extra...)...)
+		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub, &it.Version, &it.Byline}, extra...)...)
 	if pub.Valid {
 		it.PublishedAt = &pub.Int64
 	}
@@ -203,6 +207,7 @@ type itemIn struct {
 	Slug   string `json:"slug"`
 	BodyMD string `json:"body_md"`
 	Status string `json:"status"`
+	Byline string `json:"byline"`
 }
 
 type createIn struct {
@@ -233,6 +238,48 @@ func (in *itemIn) validate() string {
 	return ""
 }
 
+// A nickname: Latin letters, digits, space and . _ - , 2 to 32 characters. No
+// Cyrillic, like logins and passwords: look-alike letters are the easiest way to
+// smuggle a login into a nickname.
+var bylineRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{1,31}$`)
+
+// checkByline validates the nickname and refuses anything that equals or contains
+// a login. It answers for the client and reports whether the save may go on.
+// When the account service cannot answer, the nickname is refused (503).
+func (p *Plugin) checkByline(w http.ResponseWriter, r *http.Request, byline string) bool {
+	if byline == "" {
+		return true
+	}
+	if !bylineRe.MatchString(byline) || strings.TrimSpace(byline) != byline {
+		sdk.WriteError(w, http.StatusBadRequest, "nickname: 2-32 characters, Latin letters, digits, space . _ - ; it must start with a letter or digit")
+		return false
+	}
+	taken, err := p.acc.NameTaken(r.Context(), byline)
+	if err != nil {
+		p.h.Log().Error("check nickname", "err", err)
+		sdk.WriteError(w, http.StatusServiceUnavailable, "cannot check the nickname right now, try again in a moment")
+		return false
+	}
+	if taken {
+		sdk.WriteError(w, http.StatusBadRequest, "this nickname matches a login name; pick another one")
+		return false
+	}
+	return true
+}
+
+// publicByline is the nickname to publish with item, or "". Posts only, and only
+// while it still differs from every login: an account created after the article
+// was written must not turn the nickname into a login. Any doubt hides it.
+func (p *Plugin) publicByline(r *http.Request, it *itemView) string {
+	if it.Kind != "post" || it.Byline == "" {
+		return ""
+	}
+	if taken, err := p.acc.NameTaken(r.Context(), it.Byline); err != nil || taken {
+		return ""
+	}
+	return it.Byline
+}
+
 func reservedSlug(kind, slug string) bool { return kind == "page" && reservedPageSlugs[slug] }
 
 func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -260,6 +307,9 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 		sdk.WriteError(w, http.StatusForbidden, "you may not publish")
 		return
 	}
+	if !p.checkByline(w, r, in.Byline) {
+		return
+	}
 	if reservedSlug(in.Kind, in.Slug) {
 		sdk.WriteError(w, http.StatusBadRequest, "this slug is reserved")
 		return
@@ -278,9 +328,9 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 	insert := func(slug string) (int64, error) {
 		defer p.version.Add(1)
 		res, err := p.db.ExecContext(r.Context(),
-			`INSERT INTO content_items(kind, slug, title, body_md, body_html, lead, og_image, derived, status, author_id, author_name, created_at, updated_at, published_at)
-			 VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?)`,
-			in.Kind, slug, in.Title, in.BodyMD, html, lead, og, in.Status, pr.UserID, pr.Username, now, now, pub)
+			`INSERT INTO content_items(kind, slug, title, body_md, body_html, lead, og_image, derived, status, author_id, author_name, byline, created_at, updated_at, published_at)
+			 VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?)`,
+			in.Kind, slug, in.Title, in.BodyMD, html, lead, og, in.Status, pr.UserID, pr.Username, in.Byline, now, now, pub)
 		if err != nil {
 			return 0, err
 		}
@@ -355,6 +405,9 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		sdk.WriteError(w, http.StatusBadRequest, msg)
 		return
 	}
+	if !p.checkByline(w, r, in.Byline) {
+		return
+	}
 	// Without the version we could not tell a stale editor from a current one,
 	// and a client that leaves it out would silently overwrite newer text.
 	if in.Version < 1 {
@@ -397,9 +450,9 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// The version test and the write are ONE statement: two requests carrying the
 	// same version cannot both pass, whatever happens between load and here.
 	res, err := p.db.ExecContext(r.Context(),
-		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, updated_at=?, published_at=?, version=version+1
+		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, byline=?, updated_at=?, published_at=?, version=version+1
 		 WHERE id=? AND version=?`,
-		slug, in.Title, in.BodyMD, html, lead, og, in.Status, now, pub, id, in.Version)
+		slug, in.Title, in.BodyMD, html, lead, og, in.Status, in.Byline, now, pub, id, in.Version)
 	p.version.Add(1) // before answering, so the next request cannot see a stale document
 	if sdk.IsUniqueViolation(err) {
 		sdk.WriteError(w, http.StatusConflict, "slug already in use")
