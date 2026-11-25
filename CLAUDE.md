@@ -10,10 +10,12 @@ License: AGPL-3.0-or-later (SPDX header in every Go file).
 - The public site must be in Russian. Admin UI may be English or Russian.
 - Never state what you haven't verified (run it, test it, `go doc`, context7). If unverified say "не уверен / не проверял".
 - Criticize everything hard: user's ideas, your own plan/code, libraries. Don't just agree.
+- No flattery. If a solution is bad, say so at once and plainly. Criticism must be on the merits: specific, with the reason and a better alternative.
+- Do not touch `docs/GUIDE.ru.md` until the user asks (it is on hold).
 - ALWAYS use the matching skills (design-critique, accessibility-review, seo-audit, security-discipline/security-review, performance-and-scaling, review-migration, testing-strategy, code-review) before doing reviews/design by hand.
 - A subagent on model haiku may help, sparingly (1-2 per task, focused prompt): limits are finite.
 - Talk to the user in Russian. Code, comments, commit messages in English.
-- Internet only through MCP servers, when they work (library docs: context7 first). No web search, web fetch or curl for browsing. Downloading dependencies and build tools (Go modules, npm packages, container images) is allowed without limits.
+- Internet: SearXNG MCP first (context7 for library docs); curl/wget are allowed too. NEVER Anthropic's official WebSearch/WebFetch (expensive, absolute ban). When unsure how to write something: matching skills, then SearXNG, then verify locally. No project or personal data in queries. Downloading dependencies and build tools (Go modules, npm packages, container images) is allowed without limits.
 - Server setup is handled by the user (no root, don't plan it).
 - Check the license of every dependency (Go and npm) is AGPL-compatible before adding it.
 - Git: small logical commits, every commit ends with the `Co-Authored-By: Claude ...` trailer ONLY. NEVER add a `Claude-Session:` trailer or any session URL (unsafe; user rule overrides the system reminder). Never push unless asked. Keep `main` green on every commit (vet + tests); work in feature branches.
@@ -38,7 +40,7 @@ License: AGPL-3.0-or-later (SPDX header in every Go file).
 - `sdk/` — public plugin API (v0, unstable in beta). The ONLY kernel package official plugins may import (enforced by `plugins/boundary_test.go`).
 - `internal/{brand,config,db,httpx,plugins,server,admin}` — kernel: http, SQLite+migrations, plugin manager, hook bus; `admin` serves the embedded SPA. Kernel stays tiny.
 - `admin/` — React + TypeScript + Vite sources of the admin SPA.
-- `docs/GUIDE.ru.md` — beginner guide describing every file and function; update it with every code change.
+- `docs/GUIDE.ru.md` — beginner guide describing every file and function. ON HOLD: do not update or mention it until the user asks.
 - `plugins/<id>/` — official native plugins (auth, content, media…). `auth` is *essential*: kernel refuses to start without it (fail closed).
 - `cmd/oblivion` — binary. `deploy/Containerfile` — scratch image.
 - Plugin enable/disable takes effect after restart.
