@@ -42,6 +42,19 @@ var KnownCapabilities = map[Capability]bool{
 // The service value must implement Identity.
 const ServiceIdentity = "identity"
 
+// ServiceAccounts is the service name under which the authentication plugin
+// answers questions about account names. The service value must implement Accounts.
+const ServiceAccounts = "accounts"
+
+// Accounts lets other plugins check a public name against the account names
+// without learning them.
+type Accounts interface {
+	// NameTaken reports whether name equals or contains the login of any user,
+	// however it is capitalised, separated or disguised. An error means the answer
+	// is unknown; callers must then behave as if it were true (fail closed).
+	NameTaken(ctx context.Context, name string) (bool, error)
+}
+
 var (
 	ErrCapabilityDenied = errors.New("sdk: capability not declared or not granted")
 	ErrNotDeclared      = errors.New("sdk: name not declared in manifest")

@@ -239,6 +239,7 @@ func (p *Plugin) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "setup already completed")
 		return
 	}
+	p.accounts.invalidate()
 	p.mu.Lock()
 	p.setupToken = ""
 	p.mu.Unlock()
@@ -495,6 +496,7 @@ func (p *Plugin) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		p.internalErr(w, "create user", err)
 		return
 	}
+	p.accounts.invalidate()
 	id, _ := res.LastInsertId()
 	p.emit(r.Context(), "auth.user_created", map[string]any{"user_id": id, "username": in.Username, "role": in.Role})
 	writeJSON(w, http.StatusCreated, userView{ID: id, Username: in.Username, Role: in.Role, CreatedAt: now})
@@ -629,5 +631,6 @@ func (p *Plugin) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, errLastAdmin)
 		return
 	}
+	p.accounts.invalidate()
 	w.WriteHeader(http.StatusNoContent)
 }

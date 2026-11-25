@@ -30,6 +30,7 @@ type Plugin struct {
 	ipLimit   *limiter // per client network (IPv6 grouped by /64)
 	userLimit *limiter // per username, from any address: slows distributed guessing
 	inflight  flights  // password checks currently running, per client network
+	accounts  accountSet
 
 	stop context.CancelFunc // stops the session cleanup loop
 
@@ -61,7 +62,7 @@ func (p *Plugin) Manifest() sdk.Manifest {
 		APIVersion:   sdk.APIVersion,
 		Description:  "Users, sessions, roles, CSRF protection and login rate limiting",
 		Capabilities: []sdk.Capability{sdk.CapDB, sdk.CapHTTPAPI, sdk.CapHooks, sdk.CapIdentity},
-		Provides:     []string{sdk.ServiceIdentity},
+		Provides:     []string{sdk.ServiceIdentity, sdk.ServiceAccounts},
 		Permissions:  []string{permManageUsers},
 		Migrations:   migrationsFS,
 	}
@@ -80,6 +81,9 @@ func (p *Plugin) Init(ctx context.Context, h sdk.Host) error {
 		return err
 	}
 	if err := h.Provide(sdk.ServiceIdentity, p); err != nil {
+		return err
+	}
+	if err := h.Provide(sdk.ServiceAccounts, p); err != nil {
 		return err
 	}
 	p.startCleanup()
