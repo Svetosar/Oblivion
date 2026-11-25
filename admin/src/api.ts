@@ -52,6 +52,7 @@ export interface Item {
   title: string;
   body_md?: string;
   status: "draft" | "published";
+  version: number; // counts saves; updates must send the one that was loaded
   author_name: string;
   updated_at: number;
   published_at: number | null;

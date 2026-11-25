@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, can, errMsg, fmtDate, type Item, type MediaItem, type Me } from "./api";
+import { ApiError, api, can, errMsg, fmtDate, type Item, type MediaItem, type Me } from "./api";
 import { go, useUnsavedGuard } from "./hooks";
 
 export function ContentList({ me, query }: { me: Me; query: string }) {
@@ -71,6 +71,8 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
   const [tab, setTab] = useState<"write" | "preview">("write"); // small screens show one pane at a time
   const ta = useRef<HTMLTextAreaElement>(null);
   const [saving, setSaving] = useState(false);
+  const version = useRef(0); // the version of the item that was loaded or last saved
+  const [stale, setStale] = useState(false); // the server holds a newer version than ours
   const busy = useRef(false); // set at once, unlike state: blocks a second submit
   // What the server holds. Refs, so that navigation right after Save sees the new value.
   const stored = useRef(snapshot("", "", "", "draft"));
@@ -91,6 +93,7 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         setBody(it.body_md ?? "");
         setStatus(it.status);
         stored.current = snapshot(it.title, it.slug, it.body_md ?? "", it.status);
+        version.current = it.version;
         setLoaded(true);
       },
       (e) => setMsg({ ok: false, text: errMsg(e) }),
@@ -110,12 +113,13 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
 
   const canPublish = can(me, "content.publish");
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = async (e?: FormEvent) => {
+    e?.preventDefault();
     if (busy.current) return;
     busy.current = true;
     setSaving(true); // fields are read-only meanwhile, so nothing typed gets lost
     setMsg(null);
+    setStale(false);
     try {
       if (isNew) {
         const it = await api<Item>("POST", "/content/items", { kind, title, slug, body_md: body, status });
@@ -123,15 +127,29 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         go(`/content/${it.id}`);
         return; // stay busy until the editor of the new item replaces this one
       }
-      const it = await api<Item>("PUT", `/content/items/${idOrNew}`, { title, slug, body_md: body, status });
+      const it = await api<Item>("PUT", `/content/items/${idOrNew}`, { title, slug, body_md: body, status, version: version.current });
+      version.current = it.version;
       stored.current = snapshot(title, it.slug, body, status);
       setSlug(it.slug);
       setMsg({ ok: true, text: "Saved." });
     } catch (e) {
+      // 412: someone saved this item after we opened it. Our text stays in the editor.
+      setStale(e instanceof ApiError && e.status === 412);
       setMsg({ ok: false, text: errMsg(e) });
     }
     busy.current = false;
     setSaving(false);
+  };
+
+  // Save anyway: adopt the server's current version, then save our text over it.
+  const overwrite = async () => {
+    try {
+      version.current = (await api<Item>("GET", `/content/items/${idOrNew}`)).version;
+    } catch (e) {
+      setMsg({ ok: false, text: errMsg(e) });
+      return;
+    }
+    await save();
   };
 
   const remove = async () => {
@@ -212,6 +230,17 @@ export function ContentEditor({ me, idOrNew, query, onKind }: { me: Me; idOrNew:
         <button className="primary" aria-disabled={saving}>{saving ? "Saving…" : "Save"}</button>
       </div>
       {msg && <p className={msg.ok ? "ok" : "error"} role="alert">{msg.text}</p>}
+      {stale && (
+        <div className="row">
+          <button type="button" onClick={() => void overwrite()}>
+            Save my text anyway
+          </button>
+          {/* Reloading asks first, because the text in this editor would be lost. */}
+          <button type="button" onClick={() => location.reload()}>
+            Reload the newer version
+          </button>
+        </div>
+      )}
     </form>
   );
 }
