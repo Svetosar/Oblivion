@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"oblivion/internal/backup"
 	"oblivion/internal/brand"
 	"oblivion/internal/config"
 	"oblivion/internal/db"
@@ -40,6 +42,8 @@ func run() error {
 		switch os.Args[1] {
 		case "healthcheck":
 			return healthcheck(cfg)
+		case "backup":
+			return runBackup(cfg, os.Args[2:])
 		default:
 			return fmt.Errorf("unknown command %q", os.Args[1])
 		}
@@ -76,6 +80,23 @@ func run() error {
 
 	srv := server.New(cfg, log, d, mgr)
 	return server.Serve(ctx, srv, cfg.ShutdownWait, log)
+}
+
+// runBackup writes a backup of the data directory to a new file, or to standard
+// output when the destination is "-". The server may keep running.
+func runBackup(cfg config.Config, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: %s backup <new-file.tar.gz | ->", brand.Slug)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if args[0] != "-" {
+		return backup.ToFile(ctx, args[0], cfg.DataDir, cfg.DBPath())
+	}
+	if st, err := os.Stdout.Stat(); err != nil || st.Mode()&os.ModeCharDevice != 0 {
+		return errors.New("backup: refusing to write binary data to a terminal; redirect the output")
+	}
+	return backup.Write(ctx, os.Stdout, cfg.DataDir, cfg.DBPath())
 }
 
 // healthcheck probes the local /healthz; the scratch image has no curl.

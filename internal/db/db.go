@@ -59,6 +59,27 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return d, nil
 }
 
+// Snapshot writes a consistent, compacted copy of the database at path into dest,
+// which must not exist yet. It is safe while a server is using the database: the
+// source is opened read-only and is neither created nor migrated.
+func Snapshot(ctx context.Context, path, dest string) error {
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	q := url.Values{"mode": {"ro"}}
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "trusted_schema(0)")
+	d, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if _, err := d.ExecContext(ctx, `VACUUM INTO ?`, dest); err != nil {
+		return fmt.Errorf("snapshot database: %w", err)
+	}
+	return nil
+}
+
 var tableRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
 // Migrate applies every not-yet-applied migrations/NNNN_name.sql found in fsys,
