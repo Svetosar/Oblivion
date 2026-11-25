@@ -601,9 +601,24 @@ func TestUploadQuota(t *testing.T) {
 
 // The upload route must outlive the server-wide read timeout (slow mobile links).
 func TestUploadSurvivesShortServerReadTimeout(t *testing.T) {
+	uploadSlowly(t, func(c *http.Server) { c.ReadTimeout = 400 * time.Millisecond })
+}
+
+// The server-wide WriteTimeout counts from the moment the request headers were
+// read, so a slow upload would finish reading and then find the response write
+// already timed out: the file is stored, the client sees a broken connection and
+// uploads again. The route must extend the write deadline as well.
+func TestUploadSurvivesShortServerWriteTimeout(t *testing.T) {
+	uploadSlowly(t, func(c *http.Server) { c.WriteTimeout = 400 * time.Millisecond })
+}
+
+// uploadSlowly sends an image whose second half arrives 900 ms late to a real
+// server configured by tweak, and requires a normal 201 answer.
+func uploadSlowly(t *testing.T, tweak func(*http.Server)) {
+	t.Helper()
 	e := newEnv(t)
 	srv := httptest.NewUnstartedServer(e.h)
-	srv.Config.ReadTimeout = 400 * time.Millisecond
+	tweak(srv.Config)
 	srv.Start()
 	defer srv.Close()
 

@@ -90,9 +90,14 @@ func (p *Plugin) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if pr == nil {
 		return
 	}
-	// The server-wide ReadTimeout would cut off slow uploads of big photos.
-	// Not supported by every ResponseWriter (tests); then the default stays.
-	_ = http.NewResponseController(w).SetReadDeadline(p.now().Add(uploadDeadline))
+	// The server-wide ReadTimeout would cut off slow uploads of big photos, and
+	// WriteTimeout, which counts from the request headers, would cut off the
+	// answer once the body has finally arrived (the file is stored, the client
+	// sees a broken connection and uploads it again). Extend both.
+	// Not supported by every ResponseWriter (tests); then the defaults stay.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(p.now().Add(uploadDeadline))
+	_ = rc.SetWriteDeadline(p.now().Add(uploadDeadline + writeGrace))
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()

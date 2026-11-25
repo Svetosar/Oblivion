@@ -33,6 +33,8 @@ const (
 	// A large upload over a slow link legitimately takes longer than the
 	// server-wide read timeout; the upload route extends its own deadline.
 	uploadDeadline = 3 * time.Minute
+	// Extra time to write the answer after the body has been read.
+	writeGrace = 30 * time.Second
 )
 
 type Plugin struct {
