@@ -329,16 +329,16 @@ func TestAuthorPermissions(t *testing.T) {
 
 	path := func(m map[string]any) string { return fmt.Sprintf("/api/v1/content/items/%d", id(m)) }
 	upd := map[string]any{"title": "Edited", "body_md": "y", "status": "draft"}
-	want(t, e.do(alice, "PUT", path(mine), upd), 200)
-	want(t, e.do(alice, "PUT", path(theirs), upd), 403)
+	want(t, e.putVersioned(alice, path(mine), upd), 200)
+	want(t, e.putVersioned(alice, path(theirs), upd), 403)
 	want(t, e.do(alice, "DELETE", path(theirs), nil), 403)
 	// Cannot publish via update either.
 	upd["status"] = "published"
-	want(t, e.do(alice, "PUT", path(mine), upd), 403)
+	want(t, e.putVersioned(alice, path(mine), upd), 403)
 	// An editor can; afterwards the author can no longer touch or delete it.
-	want(t, e.do(editor, "PUT", path(mine), upd), 200)
+	want(t, e.putVersioned(editor, path(mine), upd), 200)
 	upd["status"] = "draft"
-	want(t, e.do(alice, "PUT", path(mine), upd), 403)
+	want(t, e.putVersioned(alice, path(mine), upd), 403)
 	want(t, e.do(alice, "DELETE", path(mine), nil), 403)
 	want(t, e.do(editor, "DELETE", path(mine), nil), 204)
 	want(t, e.do(editor, "GET", path(mine), nil), 404)
@@ -353,7 +353,7 @@ func TestPublishedAtSemantics(t *testing.T) {
 	}
 	path := fmt.Sprintf("/api/v1/content/items/%d", id(it))
 	put := func(status string) map[string]any {
-		w := e.do(editor, "PUT", path, map[string]any{"title": "T", "body_md": "x", "status": status})
+		w := e.putVersioned(editor, path, map[string]any{"title": "T", "body_md": "x", "status": status})
 		want(t, w, 200)
 		m := map[string]any{}
 		_ = json.Unmarshal(w.Body.Bytes(), &m)
@@ -687,7 +687,7 @@ func TestETagAndConditionalRequests(t *testing.T) {
 	}
 	// Editing the post changes the ETag.
 	e.now = e.now.Add(time.Hour)
-	want(t, e.do(editor, "PUT", "/api/v1/content/items/1", map[string]any{"title": "Пост 2", "slug": "p", "body_md": "new", "status": "published"}), 200)
+	want(t, e.putVersioned(editor, "/api/v1/content/items/1", map[string]any{"title": "Пост 2", "slug": "p", "body_md": "new", "status": "published"}), 200)
 	if c := cond("/posts/p", "", etag); c != 200 {
 		t.Fatalf("stale ETag after edit: %d", c)
 	}
@@ -869,7 +869,7 @@ func TestDocumentCacheIsInvalidatedByEveryWrite(t *testing.T) {
 	id := int64(post["id"].(float64))
 	url := fmt.Sprintf("/api/v1/content/items/%d", id)
 
-	want(t, e.do(editor, "PUT", url, map[string]any{"title": "Beta", "slug": "beta", "body_md": "x", "status": "published"}), 200)
+	want(t, e.putVersioned(editor, url, map[string]any{"title": "Beta", "slug": "beta", "body_md": "x", "status": "published"}), 200)
 	if !has("/sitemap.xml", "/posts/beta") || has("/sitemap.xml", "/posts/alpha") || !has("/feed.xml", "Beta") {
 		t.Fatal("edit not visible immediately")
 	}

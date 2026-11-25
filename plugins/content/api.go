@@ -33,6 +33,8 @@ type itemView struct {
 	CreatedAt   int64  `json:"created_at"`
 	UpdatedAt   int64  `json:"updated_at"`
 	PublishedAt *int64 `json:"published_at"`
+	// Version counts saves, starting at 1. Updates must send the one they loaded.
+	Version int64 `json:"version"`
 }
 
 func (p *Plugin) registerAPI() error {
@@ -77,7 +79,7 @@ func canWrite(pr *sdk.Principal, authorID int64) bool {
 
 func validKind(k string) bool { return k == "post" || k == "page" }
 
-const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at`
+const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at, version`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -86,7 +88,7 @@ func scanItem(s scanner, extra ...any) (itemView, error) {
 	var it itemView
 	var pub sql.NullInt64
 	err := s.Scan(append([]any{&it.ID, &it.Kind, &it.Slug, &it.Title, &it.BodyMD, &it.BodyHTML, &it.Status,
-		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub}, extra...)...)
+		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub, &it.Version}, extra...)...)
 	if pub.Valid {
 		it.PublishedAt = &pub.Int64
 	}
@@ -208,6 +210,11 @@ type createIn struct {
 	itemIn
 }
 
+type updateIn struct {
+	itemIn
+	Version int64 `json:"version"`
+}
+
 // validate checks the fields shared by create and update.
 func (in *itemIn) validate() string {
 	in.Title = strings.TrimSpace(in.Title)
@@ -327,7 +334,7 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var in itemIn
+	var in updateIn
 	if !sdk.DecodeJSON(w, r, &in, maxJSONBytes) {
 		return
 	}
@@ -348,6 +355,12 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		sdk.WriteError(w, http.StatusBadRequest, msg)
 		return
 	}
+	// Without the version we could not tell a stale editor from a current one,
+	// and a client that leaves it out would silently overwrite newer text.
+	if in.Version < 1 {
+		sdk.WriteError(w, http.StatusPreconditionRequired, "version is required: send the version you loaded")
+		return
+	}
 	// Touching live content (or making something live) is a publish-level act,
 	// so an author cannot bypass review by editing a published post.
 	if (cur.Status == "published" || in.Status == "published") && !pr.Can(permPublish) {
@@ -360,6 +373,10 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if reservedSlug(cur.Kind, slug) {
 		sdk.WriteError(w, http.StatusBadRequest, "this slug is reserved")
+		return
+	}
+	if cur.Version != in.Version { // cheap early exit, before rendering
+		replyToLostUpdate(w, cur)
 		return
 	}
 	html, err := renderMarkdown(in.BodyMD)
@@ -377,9 +394,12 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			pub = now
 		}
 	}
-	_, err = p.db.ExecContext(r.Context(),
-		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, updated_at=?, published_at=? WHERE id=?`,
-		slug, in.Title, in.BodyMD, html, lead, og, in.Status, now, pub, id)
+	// The version test and the write are ONE statement: two requests carrying the
+	// same version cannot both pass, whatever happens between load and here.
+	res, err := p.db.ExecContext(r.Context(),
+		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, updated_at=?, published_at=?, version=version+1
+		 WHERE id=? AND version=?`,
+		slug, in.Title, in.BodyMD, html, lead, og, in.Status, now, pub, id, in.Version)
 	p.version.Add(1) // before answering, so the next request cannot see a stale document
 	if sdk.IsUniqueViolation(err) {
 		sdk.WriteError(w, http.StatusConflict, "slug already in use")
@@ -389,12 +409,38 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		p.internalErr(w, "update item", err)
 		return
 	}
+	if n, err := res.RowsAffected(); err != nil {
+		p.internalErr(w, "update item", err)
+		return
+	} else if n == 0 {
+		// Someone saved or deleted the item after we loaded it a moment ago.
+		now, err := p.load(r, id)
+		if err != nil {
+			p.internalErr(w, "reload item", err)
+			return
+		}
+		replyToLostUpdate(w, now)
+		return
+	}
 	it, err := p.load(r, id)
 	if err != nil || it == nil {
 		p.internalErr(w, "load updated item", err)
 		return
 	}
 	sdk.WriteJSON(w, http.StatusOK, it)
+}
+
+// replyToLostUpdate answers an update that must not be applied: the item changed
+// since the editor loaded it (412), or no longer exists (404). 409 stays reserved
+// for a slug that is already taken, so clients can tell the two apart.
+//
+// cur is the item as it is now; nil means it was deleted in the meantime.
+func replyToLostUpdate(w http.ResponseWriter, cur *itemView) {
+	if cur == nil {
+		sdk.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	sdk.WriteError(w, http.StatusPreconditionFailed, "this item was changed by someone else after you opened it")
 }
 
 func (p *Plugin) handleDelete(w http.ResponseWriter, r *http.Request) {
