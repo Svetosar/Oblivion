@@ -79,7 +79,7 @@ export function UsersPage({ me }: { me: Me }) {
                     <button onClick={() => void act(() => api("PATCH", `/auth/users/${u.id}`, { disabled: !u.disabled }), u.disabled ? "User enabled." : "User disabled.")}>{u.disabled ? "Enable" : "Disable"}</button>
                     {resetFor === u.id ? (
                       <form className="inline-reset" onSubmit={(e) => submitReset(e, u)}>
-                        <input type="password" value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="New password (12+ characters)" aria-label={`New password for ${u.username}`} minLength={12} required autoComplete="new-password" autoFocus />
+                        <input type="password" value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="New password (Latin, 15+ characters)" aria-label={`New password for ${u.username}`} minLength={15} required autoComplete="new-password" autoFocus />
                         <button className="primary">Set</button>
                         <button type="button" onClick={() => { setResetFor(null); setResetPw(""); }}>Cancel</button>
                       </form>
@@ -123,7 +123,7 @@ function CreateUser({ onCreated, onError }: { onCreated: () => void; onError: (t
       </label>
       <label>
         Password
-        <input type="password" value={password} onChange={(e) => setP(e.target.value)} required minLength={12} autoComplete="new-password" />
+        <input type="password" value={password} onChange={(e) => setP(e.target.value)} required minLength={15} autoComplete="new-password" />
       </label>
       <label>
         Role

@@ -89,8 +89,8 @@ export function Setup({ onDone }: { onDone: (s: Session) => void }) {
         <input value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" required minLength={3} maxLength={32} />
       </label>
       <label>
-        Password (at least 12 characters)
-        <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" required minLength={12} />
+        Password (Latin letters, digits and symbols, at least 15 characters)
+        <input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="new-password" required minLength={15} />
       </label>
     </Form>
   );

@@ -30,8 +30,8 @@ export function Account({ me }: { me: Me }) {
           <input type="password" value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" required />
         </label>
         <label>
-          New password (at least 12 characters)
-          <input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" required minLength={12} />
+          New password (Latin letters, digits and symbols, at least 15 characters)
+          <input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" required minLength={15} />
         </label>
         {msg && <p className={msg.ok ? "ok" : "error"} role="alert">{msg.text}</p>}
         <button className="primary">Change password</button>

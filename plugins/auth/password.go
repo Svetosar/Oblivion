@@ -25,7 +25,9 @@ const (
 	argonKeyLen  = 32
 	saltLen      = 16
 
-	minPasswordLen = 12
+	// NIST SP 800-63B rev. 4: at least 15 characters for a password used alone.
+	// Passwords are printable ASCII (see validatePassword), so bytes are characters.
+	minPasswordLen = 15
 	maxPasswordLen = 256 // bytes; bounds hashing input
 )
 
@@ -115,12 +117,24 @@ func verifyPassword(ctx context.Context, pw, enc string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
+// validatePassword is the rule for SETTING a password; checking one never uses
+// it, so users who chose another password earlier can still sign in.
+//
+// Only printable ASCII is accepted: Latin letters, digits, symbols and the space.
+// The same Cyrillic (or accented) text typed on another keyboard layout, or
+// composed differently in Unicode, would not match the stored hash, and a
+// Cyrillic letter looks like a Latin one. Length is at least 15 characters.
 func validatePassword(pw string) error {
+	for i := 0; i < len(pw); i++ {
+		if c := pw[i]; c < 0x20 || c > 0x7e {
+			return errors.New("password may contain only Latin letters, digits, symbols and spaces (no Cyrillic or other non-ASCII characters)")
+		}
+	}
 	if len(pw) < minPasswordLen {
 		return fmt.Errorf("password must be at least %d characters", minPasswordLen)
 	}
 	if len(pw) > maxPasswordLen {
-		return fmt.Errorf("password must be at most %d bytes", maxPasswordLen)
+		return fmt.Errorf("password must be at most %d characters", maxPasswordLen)
 	}
 	return nil
 }
