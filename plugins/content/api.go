@@ -39,6 +39,13 @@ type itemView struct {
 	// Byline is the author's nickname shown on the site ("" = none). The account
 	// name (AuthorName) is for the admin only and is never published.
 	Byline string `json:"byline"`
+	// Newspaper fields. RubricID is nil for "no rubric"; Placement: 0 none, 1 the main
+	// story of the front page, 2 important (an editorial decision, see checkNewspaper).
+	RubricID     *int64 `json:"rubric_id"`
+	Dek          string `json:"dek"`
+	CoverMedia   string `json:"cover_media"`
+	CoverCaption string `json:"cover_caption"`
+	Placement    int    `json:"placement"`
 }
 
 func (p *Plugin) registerAPI() error {
@@ -52,6 +59,11 @@ func (p *Plugin) registerAPI() error {
 		{"PUT /items/{id}", p.handleUpdate},
 		{"DELETE /items/{id}", p.handleDelete},
 		{"POST /preview", p.handlePreview},
+		{"GET /rubrics", p.handleListRubrics},
+		{"POST /rubrics", p.handleCreateRubric},
+		{"PUT /rubrics/order", p.handleOrderRubrics},
+		{"PUT /rubrics/{id}", p.handleUpdateRubric},
+		{"DELETE /rubrics/{id}", p.handleDeleteRubric},
 		{"GET /settings", p.handleGetSettings},
 		{"PUT /settings", p.handlePutSettings},
 	}
@@ -83,18 +95,22 @@ func canWrite(pr *sdk.Principal, authorID int64) bool {
 
 func validKind(k string) bool { return k == "post" || k == "page" }
 
-const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at, version, byline`
+const itemCols = `id, kind, slug, title, body_md, body_html, status, author_id, author_name, created_at, updated_at, published_at, version, byline, rubric_id, dek, cover_media, cover_caption, placement`
 
 type scanner interface{ Scan(dest ...any) error }
 
 // scanItem reads itemCols; extra receives any further selected columns.
 func scanItem(s scanner, extra ...any) (itemView, error) {
 	var it itemView
-	var pub sql.NullInt64
+	var pub, rubric sql.NullInt64
 	err := s.Scan(append([]any{&it.ID, &it.Kind, &it.Slug, &it.Title, &it.BodyMD, &it.BodyHTML, &it.Status,
-		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub, &it.Version, &it.Byline}, extra...)...)
+		&it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub, &it.Version, &it.Byline,
+		&rubric, &it.Dek, &it.CoverMedia, &it.CoverCaption, &it.Placement}, extra...)...)
 	if pub.Valid {
 		it.PublishedAt = &pub.Int64
+	}
+	if rubric.Valid {
+		it.RubricID = &rubric.Int64
 	}
 	return it, err
 }
@@ -150,7 +166,7 @@ func (p *Plugin) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, limit, offset)
 	rows, err := p.db.QueryContext(r.Context(),
-		`SELECT id, kind, slug, title, status, author_id, author_name, created_at, updated_at, published_at
+		`SELECT id, kind, slug, title, status, author_id, author_name, created_at, updated_at, published_at, rubric_id, placement
 		 FROM content_items WHERE `+strings.Join(where, " AND ")+` ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		p.internalErr(w, "list items", err)
@@ -160,13 +176,16 @@ func (p *Plugin) handleList(w http.ResponseWriter, r *http.Request) {
 	out := []itemView{}
 	for rows.Next() {
 		var it itemView
-		var pub sql.NullInt64
-		if err := rows.Scan(&it.ID, &it.Kind, &it.Slug, &it.Title, &it.Status, &it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub); err != nil {
+		var pub, rubric sql.NullInt64
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Slug, &it.Title, &it.Status, &it.AuthorID, &it.AuthorName, &it.CreatedAt, &it.UpdatedAt, &pub, &rubric, &it.Placement); err != nil {
 			p.internalErr(w, "scan item", err)
 			return
 		}
 		if pub.Valid {
 			it.PublishedAt = &pub.Int64
+		}
+		if rubric.Valid {
+			it.RubricID = &rubric.Int64
 		}
 		out = append(out, it)
 	}
@@ -203,12 +222,22 @@ func (p *Plugin) handleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 type itemIn struct {
-	Title  string `json:"title"`
-	Slug   string `json:"slug"`
-	BodyMD string `json:"body_md"`
-	Status string `json:"status"`
-	Byline string `json:"byline"`
+	Title        string `json:"title"`
+	Slug         string `json:"slug"`
+	BodyMD       string `json:"body_md"`
+	Status       string `json:"status"`
+	Byline       string `json:"byline"`
+	RubricID     *int64 `json:"rubric_id"`
+	Dek          string `json:"dek"`
+	CoverMedia   string `json:"cover_media"`
+	CoverCaption string `json:"cover_caption"`
+	Placement    int    `json:"placement"`
 }
+
+const maxDekLen = 300 // characters; also the cover caption
+
+// coverRe is the shape of a stored media file name (see the media plugin): 32 hex digits and an extension.
+var coverRe = regexp.MustCompile(`^[0-9a-f]{32}\.(?:jpg|png|gif|webp)$`)
 
 type createIn struct {
 	Kind string `json:"kind"`
@@ -235,7 +264,47 @@ func (in *itemIn) validate() string {
 	if in.Slug != "" && (!slugRe.MatchString(in.Slug) || len(in.Slug) > 100) {
 		return "slug may contain lowercase letters, digits and single hyphens"
 	}
+	in.Dek, in.CoverCaption = strings.TrimSpace(in.Dek), strings.TrimSpace(in.CoverCaption)
+	if utf8.RuneCountInString(in.Dek) > maxDekLen {
+		return fmt.Sprintf("dek must be at most %d characters", maxDekLen)
+	}
+	if utf8.RuneCountInString(in.CoverCaption) > maxDekLen {
+		return fmt.Sprintf("cover caption must be at most %d characters", maxDekLen)
+	}
+	if in.CoverMedia != "" && !coverRe.MatchString(in.CoverMedia) {
+		return "cover must be the file name of an uploaded image"
+	}
+	if in.Placement < 0 || in.Placement > 2 {
+		return "placement must be 0 (none), 1 (main) or 2 (important)"
+	}
 	return ""
+}
+
+// checkNewspaper checks what needs the database or the caller's rights: the rubric must exist,
+// and the front page is an editorial decision, so only someone who may publish can change an
+// article's placement (cur is nil for a new article). It answers for the client.
+func (p *Plugin) checkNewspaper(w http.ResponseWriter, r *http.Request, pr *sdk.Principal, in *itemIn, cur *itemView) bool {
+	was := 0
+	if cur != nil {
+		was = cur.Placement
+	}
+	if in.Placement != was && !pr.Can(permPublish) {
+		sdk.WriteError(w, http.StatusForbidden, "you may not change the placement on the front page")
+		return false
+	}
+	if in.RubricID != nil {
+		var one int
+		err := p.db.QueryRowContext(r.Context(), `SELECT 1 FROM content_rubrics WHERE id = ?`, *in.RubricID).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			sdk.WriteError(w, http.StatusBadRequest, "no such rubric")
+			return false
+		}
+		if err != nil {
+			p.internalErr(w, "check rubric", err)
+			return false
+		}
+	}
+	return true
 }
 
 // A nickname: Latin letters, digits, space and . _ - , 2 to 32 characters. No
@@ -307,7 +376,7 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 		sdk.WriteError(w, http.StatusForbidden, "you may not publish")
 		return
 	}
-	if !p.checkByline(w, r, in.Byline) {
+	if !p.checkByline(w, r, in.Byline) || !p.checkNewspaper(w, r, pr, &in.itemIn, nil) {
 		return
 	}
 	if reservedSlug(in.Kind, in.Slug) {
@@ -328,9 +397,11 @@ func (p *Plugin) handleCreate(w http.ResponseWriter, r *http.Request) {
 	insert := func(slug string) (int64, error) {
 		defer p.version.Add(1)
 		res, err := p.db.ExecContext(r.Context(),
-			`INSERT INTO content_items(kind, slug, title, body_md, body_html, lead, og_image, derived, status, author_id, author_name, byline, created_at, updated_at, published_at)
-			 VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?)`,
-			in.Kind, slug, in.Title, in.BodyMD, html, lead, og, in.Status, pr.UserID, pr.Username, in.Byline, now, now, pub)
+			`INSERT INTO content_items(kind, slug, title, body_md, body_html, lead, og_image, derived, status, author_id, author_name, byline, created_at, updated_at, published_at,
+			                          rubric_id, dek, cover_media, cover_caption, placement)
+			 VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			in.Kind, slug, in.Title, in.BodyMD, html, lead, og, in.Status, pr.UserID, pr.Username, in.Byline, now, now, pub,
+			in.RubricID, in.Dek, in.CoverMedia, in.CoverCaption, in.Placement)
 		if err != nil {
 			return 0, err
 		}
@@ -405,7 +476,7 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		sdk.WriteError(w, http.StatusBadRequest, msg)
 		return
 	}
-	if !p.checkByline(w, r, in.Byline) {
+	if !p.checkByline(w, r, in.Byline) || !p.checkNewspaper(w, r, pr, &in.itemIn, cur) {
 		return
 	}
 	// Without the version we could not tell a stale editor from a current one,
@@ -450,9 +521,11 @@ func (p *Plugin) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// The version test and the write are ONE statement: two requests carrying the
 	// same version cannot both pass, whatever happens between load and here.
 	res, err := p.db.ExecContext(r.Context(),
-		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, byline=?, updated_at=?, published_at=?, version=version+1
+		`UPDATE content_items SET slug=?, title=?, body_md=?, body_html=?, lead=?, og_image=?, derived=1, status=?, byline=?, updated_at=?, published_at=?, version=version+1,
+		        rubric_id=?, dek=?, cover_media=?, cover_caption=?, placement=?
 		 WHERE id=? AND version=?`,
-		slug, in.Title, in.BodyMD, html, lead, og, in.Status, in.Byline, now, pub, id, in.Version)
+		slug, in.Title, in.BodyMD, html, lead, og, in.Status, in.Byline, now, pub,
+		in.RubricID, in.Dek, in.CoverMedia, in.CoverCaption, in.Placement, id, in.Version)
 	p.version.Add(1) // before answering, so the next request cannot see a stale document
 	if sdk.IsUniqueViolation(err) {
 		sdk.WriteError(w, http.StatusConflict, "slug already in use")
