@@ -300,5 +300,8 @@ func (p *Plugin) handleServe(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", mimeByExt[name[strings.LastIndexByte(name, '.'):]])
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	h.Set("Content-Disposition", "inline")
+	// The kernel defaults to same-origin; published images are meant to be shown on other
+	// sites too (feed readers, link previews, embeds), so this file type opts out.
+	h.Set("Cross-Origin-Resource-Policy", "cross-origin")
 	http.ServeContent(w, r, name, st.ModTime(), f)
 }

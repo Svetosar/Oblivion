@@ -174,6 +174,19 @@ func TestWholeSystem(t *testing.T) {
 		t.Errorf("a post without a nickname names the login:\n%s", b)
 	}
 
+	// Images and the favicon are meant to be shown on other sites (feed readers, embeds):
+	// they are cross-origin. Pages and the API stay same-origin.
+	for path, want := range map[string]string{
+		media.URL: "cross-origin", "/theme/favicon.svg": "cross-origin",
+		"/posts/more": "same-origin", "/api/v1/auth/setup": "same-origin", "/theme/style.css": "same-origin",
+	} {
+		resp, b = do("GET", path, nil, "", nil)
+		expect(resp, b, 200)
+		if got := resp.Header.Get("Cross-Origin-Resource-Policy"); got != want {
+			t.Errorf("%s: Cross-Origin-Resource-Policy = %q, want %q", path, got, want)
+		}
+	}
+
 	// 3. A reader (no cookies, Russian browser, gzip) opens the post.
 	reader := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 	req, _ := http.NewRequest("GET", ts.URL+"/posts/more", nil)

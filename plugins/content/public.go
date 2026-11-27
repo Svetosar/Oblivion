@@ -128,6 +128,8 @@ func handleFavicon(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// Feed readers and bookmark tools fetch the site icon from their own pages.
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	_, _ = w.Write(b)
 }
 
