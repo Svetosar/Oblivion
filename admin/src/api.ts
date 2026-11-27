@@ -78,7 +78,7 @@ export interface User {
 
 // Alt text proposed for an uploaded image: the file name without its extension.
 // It is only a start: the text stays editable in the editor.
-export const altText = (filename: string) => filename.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "").trim() || "image";
+export const altText = (filename: string) => filename.replace(/\.[^.]+$/, "").replace(/[[\]]/g, "").trim() || "изображение";
 
 // mergeById appends a fetched page to what is shown, skipping rows that moved
 // between pages while the list was open.
@@ -89,4 +89,17 @@ export function mergeById<T extends { id: number }>(have: T[], more: T[]): T[] {
 
 export const can = (me: Me, perm: string) => !!(me.perms && (me.perms["*"] || me.perms[perm]));
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-export const fmtDate = (ts: number | null) => (ts ? new Date(ts * 1000).toLocaleString() : "—");
+export const ROLE_RU: Record<string, string> = { admin: "администратор", editor: "редактор", author: "автор" };
+
+// fmtDate shows "сегодня, 09:40", "вчера, 21:10", or "24 ноября" (with the year for another year).
+export function fmtDate(ts: number | null): string {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const day = (x: Date) => Math.floor(new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime() / 86400000);
+  const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  if (day(d) === day(now)) return `сегодня, ${time}`;
+  if (day(d) === day(now) - 1) return `вчера, ${time}`;
+  const date = d.toLocaleDateString("ru-RU", d.getFullYear() === now.getFullYear() ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" });
+  return date;
+}

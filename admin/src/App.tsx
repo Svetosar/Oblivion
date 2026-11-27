@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, can, errMsg, onUnauthorized, setCsrf, type Session } from "./api";
+import { ApiError, ROLE_RU, api, can, errMsg, onUnauthorized, setCsrf, type Session } from "./api";
 import { dropUnsaved, go, hasUnsaved, mayLeave, useHash } from "./hooks";
 import { Login, Setup } from "./Auth";
 import { ContentEditor, ContentList } from "./Content";
@@ -7,6 +7,7 @@ import { MediaPage } from "./Media";
 import { UsersPage } from "./Users";
 import { Account } from "./Account";
 import { SettingsPage } from "./Settings";
+import { Icon, type IconName } from "./icons";
 
 type State = "loading" | "login" | "setup" | { error: string } | Session;
 
@@ -67,12 +68,12 @@ export function App() {
     setState("login");
   };
 
-  if (state === "loading") return <p className="center muted">Loading…</p>;
+  if (state === "loading") return <p className="center muted">Загрузка…</p>;
   if (typeof state === "object" && "error" in state)
     return (
       <div className="center">
-        <p className="error">Cannot reach the server: {state.error}</p>
-        <button onClick={() => void probe()}>Retry</button>
+        <p className="error">Не удалось связаться с сервером: {state.error}</p>
+        <button onClick={() => void probe()}>Повторить</button>
       </div>
     );
   if (state === "setup") return <Setup onDone={entered} />;
@@ -80,7 +81,7 @@ export function App() {
   const userId = state.user.id;
   return (
     <>
-      {expired && <Login note="Your session ended. Sign in again; unsaved text is kept." onDone={(s) => void reentered(userId, s)} />}
+      {expired && <Login note="Сессия закончилась. Войдите снова: несохранённый текст сохранён." onDone={(s) => void reentered(userId, s)} />}
       <div hidden={expired}>
         <Shell key={userId} session={state} onLogout={loggedOut} />
       </div>
@@ -94,8 +95,12 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
   // The editor of an existing item learns its kind only after loading; it reports it
   // so the right menu entry can be highlighted.
   const [editorKind, setEditorKind] = useState<"post" | "page" | null>(null);
+  const [menu, setMenu] = useState(false); // the drawer on a phone
   const [path] = hash.split("?");
   const parts = path.split("/").filter(Boolean);
+
+  // Going to another page closes the drawer.
+  useEffect(() => setMenu(false), [hash]);
 
   const logout = async () => {
     if (!mayLeave()) return;
@@ -117,10 +122,10 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
       page = <MediaPage me={me} />;
       break;
     case "users":
-      page = can(me, "users.manage") ? <UsersPage me={me} /> : <p className="error">Not allowed.</p>;
+      page = can(me, "users.manage") ? <UsersPage me={me} /> : <p className="error">Нет доступа.</p>;
       break;
     case "settings":
-      page = can(me, "content.settings") ? <SettingsPage /> : <p className="error">Not allowed.</p>;
+      page = can(me, "content.settings") ? <SettingsPage /> : <p className="error">Нет доступа.</p>;
       break;
     case "account":
       page = <Account me={me} />;
@@ -128,44 +133,77 @@ function Shell({ session, onLogout }: { session: Session; onLogout: () => void }
     default:
       page = (
         <>
-          <h1>Welcome, {me.username}</h1>
-          <p className="muted">Role: {me.role}</p>
-          <p>
-            <a href="#/content/new?kind=post">Write a post</a> · <a href="#/content/new?kind=page">Create a page</a>
-          </p>
+          <div className="top">
+            <h1>Здравствуйте, {me.username}</h1>
+          </div>
+          <p className="muted">Роль: {ROLE_RU[me.role] ?? me.role}</p>
+          <div className="row" style={{ justifyContent: "flex-start" }}>
+            <a className="button primary" href="#/content/new?kind=post">
+              <Icon name="plus" small />
+              Написать материал
+            </a>
+            <a className="button" href="#/content/new?kind=page">
+              Создать страницу
+            </a>
+          </div>
         </>
       );
   }
 
   // Which menu entry is current: content entries depend on the kind (query or loaded item).
   const kindNow = parts[0] === "content" ? (parts[1] && parts[1] !== "new" ? editorKind : new URLSearchParams(hash.split("?")[1] ?? "").get("kind") === "page" ? "page" : "post") : null;
-  const link = (to: string, label: string, active: boolean) => (
-    <a href={"#" + to} className={active ? "active" : undefined} aria-current={active ? "page" : undefined}>
+  const link = (to: string, label: string, icon: IconName, active: boolean) => (
+    <a className={"nav" + (active ? " on" : "")} href={"#" + to} aria-current={active ? "page" : undefined}>
+      <Icon name={icon} />
       {label}
     </a>
   );
   return (
-    <>
-      <header className="bar">
-        <a className="brand" href="#/">
-          Admin
-        </a>
-        <nav>
-          {link("/content?kind=post", "Posts", kindNow === "post")}
-          {link("/content?kind=page", "Pages", kindNow === "page")}
-          {link("/media", "Media", parts[0] === "media")}
-          {can(me, "users.manage") && link("/users", "Users", parts[0] === "users")}
-          {can(me, "content.settings") && link("/settings", "Settings", parts[0] === "settings")}
-          {link("/account", "Account", parts[0] === "account")}
-        </nav>
-        <a className="site-link" href="/" target="_blank" rel="noreferrer">
-          View site
-        </a>
-        <button className="link" onClick={() => void logout()}>
-          Log out ({me.username})
+    <div className="app">
+      <header className="topbar">
+        <button className="ghost ico" aria-label="Открыть меню" aria-expanded={menu} onClick={() => setMenu(true)}>
+          <Icon name="menu" />
         </button>
+        <a className="brand" href="#/" style={{ padding: 0 }}>
+          <i className="dot" />
+          Админка
+        </a>
       </header>
-      <main>{page}</main>
-    </>
+      <div className={"scrim" + (menu ? " open" : "")} onClick={() => setMenu(false)} />
+      <aside className={"side" + (menu ? " open" : "")} aria-label="Меню">
+        <a className="brand" href="#/">
+          <i className="dot" />
+          Админка
+        </a>
+        <nav className="navs" aria-label="Разделы">
+          {link("/content?kind=post", "Материалы", "doc", kindNow === "post")}
+          {link("/content?kind=page", "Страницы", "page", kindNow === "page")}
+          {link("/media", "Медиа", "image", parts[0] === "media")}
+          {can(me, "users.manage") && link("/users", "Пользователи", "users", parts[0] === "users")}
+          {can(me, "content.settings") && link("/settings", "Настройки", "gear", parts[0] === "settings")}
+        </nav>
+        <div className="sidefoot">
+          <a className="nav" href="/" target="_blank" rel="noreferrer">
+            <Icon name="ext" small />
+            Открыть сайт
+          </a>
+          <div className="user">
+            <div className="ava" aria-hidden="true">
+              {me.username.slice(0, 1).toUpperCase()}
+            </div>
+            <a className="who" href="#/account" aria-current={parts[0] === "account" ? "page" : undefined} style={{ textDecoration: "none", color: "inherit" }}>
+              {me.username}
+              <small>{ROLE_RU[me.role] ?? me.role}</small>
+            </a>
+            <button className="ghost sm ico" aria-label="Выйти" onClick={() => void logout()}>
+              <Icon name="logout" small />
+            </button>
+          </div>
+        </div>
+      </aside>
+      <main className="pg">
+        <div className="wrap">{page}</div>
+      </main>
+    </div>
   );
 }

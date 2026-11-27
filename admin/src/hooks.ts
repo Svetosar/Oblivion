@@ -7,7 +7,7 @@ let unsaved: () => boolean = () => false;
 export const hasUnsaved = () => unsaved();
 
 // mayLeave reports whether the current page may be discarded.
-export const mayLeave = () => !unsaved() || confirm("You have unsaved changes. Leave without saving?");
+export const mayLeave = () => !unsaved() || confirm("Есть несохранённые изменения. Уйти без сохранения?");
 
 // dropUnsaved forgets the check, for work that must be discarded without asking.
 export const dropUnsaved = () => {
