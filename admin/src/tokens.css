@@ -1,0 +1,128 @@
+/*
+ * Design tokens of the admin (see DESIGN.md).
+ * Colors are taken from the real claude.com page (rendered pixels) and the claude.ai
+ * stylesheet (theme "claude"), checked 2026-11-27; see DESIGN.md section 1 for what was
+ * and was not verifiable. Fonts of that site are proprietary and are NOT used here.
+ * Three tiers: primitive (named by value) -> semantic (named by role) -> component.
+ * Components use only semantic tokens; dark mode swaps semantic bindings only.
+ * Every semantic text/background pair was checked against WCAG 2.2 AA
+ * (text >= 4.5:1, field borders and focus ring >= 3:1).
+ */
+:root {
+  /* ---- primitives: warm gray (ivory ground, slate text) ---- */
+  --gray-0: #FFFFFF; --gray-50: #FAF9F5; --gray-100: #F5F4ED; --gray-150: #F0EEE6; --gray-200: #E8E6DC; --gray-250: #DEDCD1;
+  --gray-350: #C2C0B6; --gray-450: #9C9A92; --gray-550: #73726C; --gray-600: #52514E; --gray-700: #3D3D3A;
+  --gray-750: #30302E; --gray-800: #262624; --gray-850: #1F1E1D; --gray-950: #141413;
+  /* ---- primitives: clay (brand mark, decoration only) ---- */
+  --clay-500: #D97757; --clay-600: #C6613F;
+  /* ---- primitives: states ---- */
+  --red-700: #8A2424; --red-600: #B53333; --red-300: #FE8181; --red-100: #F9ECEC; --red-900: #682626;
+  --green-700: #005C08; --green-600: #2F7613; --green-300: #65BB30; --green-100: #E7F1DA; --green-900: #004708;
+  --yellow-700: #5D4704; --yellow-600: #875A08; --yellow-300: #DA9E25; --yellow-100: #F8EEDD; --yellow-900: #4B3902;
+  --blue-100: #CCE3FD; --blue-200: #9DC8F7; --blue-350: #519CED; --blue-500: #2370CD; --blue-600: #1757AC; --blue-750: #063167;
+
+  /* ---- semantic color: light ---- */
+  --color-bg-page: var(--gray-50);
+  --color-bg-surface: var(--gray-0);
+  --color-bg-sunken: var(--gray-150);
+  --color-bg-hover: var(--gray-100);
+  --color-bg-sidebar: var(--gray-100);
+  --color-text-primary: var(--gray-950);
+  --color-text-muted: var(--gray-600);
+  --color-text-placeholder: var(--gray-550);
+  --color-text-on-action: var(--gray-50);
+  --color-link: var(--gray-950); /* links are slate and underlined, as on the source site */
+  --color-border-subtle: rgb(31 30 29 / .10);
+  --color-border-default: rgb(31 30 29 / .30);
+  --color-border-field: var(--gray-550);
+  --color-action-bg: var(--gray-950); /* main button is near-black, as on claude.com */
+  --color-action-bg-hover: var(--gray-700);
+  --color-mark: var(--clay-500); /* decoration only (2.96:1 on the page): logo, active-item bar */
+  --color-focus-ring: var(--blue-500);
+  --color-danger-text: var(--red-600);
+  --color-danger-strong: var(--red-700);
+  --color-danger-bg: var(--red-100);
+  --color-warning-text: var(--yellow-600);
+  --color-warning-strong: var(--yellow-700);
+  --color-warning-bg: var(--yellow-100);
+  --color-info-text: var(--blue-600);
+  --color-info-bg: var(--blue-100);
+  --color-success-text: var(--green-600);
+  --color-success-strong: var(--green-700);
+  --color-success-bg: var(--green-100);
+
+  /* ---- type ---- */
+  --font-ui: "Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Literata", Georgia, "Times New Roman", serif; /* headings: serif display over sans body */
+  --font-reading: "Literata", Georgia, "Times New Roman", serif; /* the editor text: same as the public article */
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-xs: .8125rem; --text-sm: .875rem; --text-base: 1rem; --text-md: 1.125rem; --text-lg: 1.375rem; --text-xl: 1.75rem; --text-2xl: 2.25rem;
+  --leading-tight: 1.2; --leading-snug: 1.35; --leading-body: 1.55; --leading-reading: 1.7;
+  --weight-regular: 400; --weight-medium: 500; --weight-semibold: 600;
+
+  /* ---- space (4px base) ---- */
+  --space-1: .25rem; --space-2: .5rem; --space-3: .75rem; --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem;
+  --space-8: 2rem; --space-10: 2.5rem; --space-12: 3rem; --space-16: 4rem;
+
+  /* ---- shape and depth ---- */
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 24px; --radius-full: 999px;
+  --shadow-color: 20 19 19; /* tinted from slate, never pure black */
+  --shadow-1: 0 1px 2px rgb(var(--shadow-color) / .06), 0 0 0 .5px rgb(var(--shadow-color) / .08);
+  --shadow-2: 0 2px 4px rgb(var(--shadow-color) / .05), 0 8px 20px rgb(var(--shadow-color) / .08);
+  --shadow-3: 0 4px 8px rgb(var(--shadow-color) / .06), 0 18px 44px rgb(var(--shadow-color) / .14);
+
+  /* ---- layout ---- */
+  --size-sidebar: 248px;
+  --size-content: 72rem;
+  --size-reading: 44rem;
+  --size-touch: 44px; /* minimum target on touch screens */
+
+  /* ---- motion ---- */
+  --duration-fast: 120ms; --duration-base: 200ms; --duration-slow: 320ms;
+  --ease-out: cubic-bezier(.2, .7, .2, 1);   /* things arriving */
+  --ease-in-out: cubic-bezier(.45, 0, .2, 1); /* things moving */
+  --shift-enter: 8px; /* how far a screen or toast travels while appearing */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-page: var(--gray-800);
+    --color-bg-surface: var(--gray-750);
+    --color-bg-sunken: var(--gray-850);
+    --color-bg-hover: var(--gray-700);
+    --color-bg-sidebar: var(--gray-850);
+    --color-text-primary: var(--gray-50);
+    --color-text-muted: var(--gray-350);
+    --color-text-placeholder: var(--gray-450);
+    --color-text-on-action: var(--gray-50);
+    --color-link: var(--gray-50);
+    --color-border-subtle: rgb(222 220 209 / .10);
+    --color-border-default: rgb(222 220 209 / .30);
+    --color-border-field: var(--gray-450);
+    /* Muted gray, the user's choice: an ivory button glared on the dark page. Text 10.3:1, hover 7.5:1.
+       The fill is close to the page (1.4:1), so secondary buttons in dark mode have an outline and no fill. */
+    --color-action-bg: var(--gray-700);
+    --color-action-bg-hover: var(--gray-600);
+    --color-focus-ring: var(--blue-350);
+    --color-danger-text: var(--red-300);
+    --color-danger-strong: var(--red-300);
+    --color-danger-bg: var(--red-900);
+    --color-warning-text: var(--yellow-300);
+    --color-warning-strong: var(--yellow-300);
+    --color-warning-bg: var(--yellow-900);
+    --color-info-text: var(--blue-200);
+    --color-info-bg: var(--blue-750);
+    --color-success-text: var(--green-300);
+    --color-success-strong: var(--green-300);
+    --color-success-bg: var(--green-900);
+    --shadow-color: 0 0 0;
+    --shadow-1: 0 1px 2px rgb(var(--shadow-color) / .35), 0 0 0 .5px rgb(255 255 255 / .06);
+    --shadow-2: 0 2px 6px rgb(var(--shadow-color) / .35), 0 8px 20px rgb(var(--shadow-color) / .3);
+    --shadow-3: 0 4px 10px rgb(var(--shadow-color) / .4), 0 20px 48px rgb(var(--shadow-color) / .45);
+  }
+}
+
+/* Accessibility condition that outranks taste: no travel, no fades. State changes stay visible. */
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-fast: 0ms; --duration-base: 0ms; --duration-slow: 0ms; --shift-enter: 0px; }
+}
