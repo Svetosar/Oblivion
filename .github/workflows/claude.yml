@@ -1,5 +1,15 @@
 name: Claude Code
 
+# Claude runs on the repository owner's subscription (CLAUDE_CODE_OAUTH_TOKEN).
+#   * The owner is unlimited (within the per-run caps below).
+#   * Friends are listed in the repository variable CLAUDE_FRIENDS, a JSON array of
+#     GitHub logins, for example ["alice","bob"]. Empty or missing = nobody but the owner.
+#     A friend gets read-only work (no shell, no web), a smaller step budget, one run at a time,
+#     and a daily limit: CLAUDE_FRIEND_DAILY_LIMIT per person (default 3) and
+#     CLAUDE_TOTAL_DAILY_LIMIT for all friends together (default 10).
+#   * Everybody else is ignored.
+# Change the variables in Settings > Secrets and variables > Actions > Variables; no commit needed.
+
 on:
   issue_comment:
     types: [created]
@@ -11,17 +21,64 @@ on:
     types: [submitted]
 
 jobs:
-  claude:
-    # Only the repository owner may start Claude: it runs on the owner's subscription,
-    # so nobody else may spend it. Do not remove the actor check.
+  gate:
+    # Decides who may start Claude. It only looks at the actor, the variables and the run history.
     if: |
-      github.actor == 'Svetosar' && (
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))))
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      allowed: ${{ steps.decide.outputs.allowed }}
+      who: ${{ steps.decide.outputs.who }}
+    steps:
+      - name: Decide
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+          FRIENDS: ${{ vars.CLAUDE_FRIENDS }}
+          PER_FRIEND: ${{ vars.CLAUDE_FRIEND_DAILY_LIMIT }}
+          TOTAL: ${{ vars.CLAUDE_TOTAL_DAILY_LIMIT }}
+        run: |
+          set -eu
+          deny() { echo "allowed=false" >> "$GITHUB_OUTPUT"; echo "who=none" >> "$GITHUB_OUTPUT"; echo "Denied: $1"; exit 0; }
+          if [ "$ACTOR" = "$OWNER" ]; then
+            echo "allowed=true" >> "$GITHUB_OUTPUT"; echo "who=owner" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Is the actor a listed friend? A broken variable means nobody is.
+          if ! printf '%s' "${FRIENDS:-[]}" | jq -e --arg a "$ACTOR" 'index($a) != null' > /dev/null 2>&1; then
+            deny "$ACTOR is not on the friends list"
+          fi
+          PER_FRIEND="${PER_FRIEND:-3}"; TOTAL="${TOTAL:-10}"
+          case "$PER_FRIEND$TOTAL" in *[!0-9]*) deny "limits are not numbers" ;; esac
+          since="$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          # Runs of the last 24 h that were not skipped (this run counts too, hence "greater than").
+          # An attempt that was refused also counts: asking again and again only extends the wait.
+          gh api --paginate "repos/$REPO/actions/workflows/claude.yml/runs?created=%3E%3D$since&per_page=100" \
+            --jq '.workflow_runs[] | select(.conclusion != "skipped") | .actor.login' > runs.txt
+          mine="$(grep -cx -- "$ACTOR" runs.txt || true)"
+          others="$(grep -vcx -- "$OWNER" runs.txt || true)"
+          echo "runs in 24h: $ACTOR=$mine, all friends=$others"
+          [ "$mine" -le "$PER_FRIEND" ] || deny "$ACTOR used the daily limit of $PER_FRIEND"
+          [ "$others" -le "$TOTAL" ] || deny "friends used the shared daily limit of $TOTAL"
+          echo "allowed=true" >> "$GITHUB_OUTPUT"; echo "who=friend" >> "$GITHUB_OUTPUT"
+
+  claude:
+    needs: gate
+    if: needs.gate.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ needs.gate.outputs.who == 'owner' && 15 || 8 }}
+    # Friends run one at a time.
+    concurrency:
+      group: ${{ needs.gate.outputs.who == 'friend' && 'claude-friends' || format('claude-owner-{0}', github.run_id) }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: read
@@ -44,12 +101,5 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # Cap the work of one run so a long task cannot burn the quota.
-          claude_args: '--max-turns 20'
-
+          # The owner: up to 20 steps. A friend: 8 steps and no shell or web access.
+          claude_args: ${{ needs.gate.outputs.who == 'owner' && '--max-turns 20' || '--max-turns 8 --disallowedTools "Bash,WebFetch,WebSearch"' }}
