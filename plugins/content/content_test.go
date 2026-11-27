@@ -552,7 +552,7 @@ func TestHeadMetadataWithBaseURL(t *testing.T) {
 	}
 	home := e.get("/", "").Body.String()
 	if !strings.Contains(home, `"@type":"WebSite"`) || !strings.Contains(home, `<link rel="canonical" href="https://example.com/">`) ||
-		!strings.Contains(home, `<meta name="description" content="Заметки обо всём">`) || !strings.Contains(home, "<h1>Дневник</h1>") {
+		!strings.Contains(home, `<meta name="description" content="Заметки обо всём">`) || !strings.Contains(home, `<h1 class="sr-only">Дневник</h1>`) {
 		t.Errorf("home metadata wrong:\n%s", home)
 	}
 	// A hostile Host header must not leak into canonical links.
@@ -881,7 +881,7 @@ func TestBackfillDerived(t *testing.T) {
 	if lead != "Старый текст." || og != "/media/"+img+".png" || derived != 1 {
 		t.Fatalf("lead=%q og=%q derived=%d", lead, og, derived)
 	}
-	if b := e.get("/", "").Body.String(); !strings.Contains(b, "<p>Старый текст.</p>") {
+	if b := e.get("/", "").Body.String(); !strings.Contains(b, `<p class="dek">Старый текст.</p>`) {
 		t.Error("index does not use the stored lead")
 	}
 	// A second run changes nothing and terminates.
@@ -932,5 +932,30 @@ func TestDocumentCacheBuildsOncePerVersion(t *testing.T) {
 	_, _ = e.p.cachedDoc("k", build)
 	if n != 2 {
 		t.Fatalf("not rebuilt after a version bump (n=%d)", n)
+	}
+}
+
+// The theme serves its own fonts: nothing may be loaded from another site (CSP default-src 'self').
+func TestThemeFonts(t *testing.T) {
+	e := newEnv(t)
+	w := e.get("/theme/fonts/onest-latin.woff2", "")
+	want(t, w, 200)
+	if w.Header().Get("Content-Type") != "font/woff2" {
+		t.Fatalf("content-type %q", w.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("fonts never change under this name, expected immutable caching: %q", w.Header().Get("Cache-Control"))
+	}
+	if !bytes.HasPrefix(w.Body.Bytes(), []byte("wOF2")) {
+		t.Fatalf("not a woff2 file: %q", w.Body.Bytes()[:8])
+	}
+	// Only the bundled names are served: no listing, no traversal, nothing unknown.
+	for _, name := range []string{"nope.woff2", "..%2Fstyle.css", "OFL-Onest.txt", "onest-latin.woff2/x", ""} {
+		if r := e.get("/theme/fonts/"+name, ""); r.Code == 200 {
+			t.Fatalf("%q was served: %q", name, r.Body.String())
+		}
+	}
+	if css := e.get("/theme/style.css", "").Body.String(); !strings.Contains(css, "/theme/fonts/") {
+		t.Fatal("style.css does not use the bundled fonts")
 	}
 }

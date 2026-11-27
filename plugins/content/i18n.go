@@ -15,6 +15,7 @@ type tr struct {
 	Lang, Locale  string
 	DefaultTitle  string
 	Newer, Older  string
+	Latest        string // heading of the list under the lead story
 	NothingYet    string
 	PageN         string // "Page 2"
 	NotFound      string
@@ -26,11 +27,11 @@ type tr struct {
 }
 
 var (
-	langRU = &tr{Lang: "ru", Locale: "ru_RU", DefaultTitle: "Мой сайт", Newer: "← Новее", Older: "Старше →",
+	langRU = &tr{Lang: "ru", Locale: "ru_RU", DefaultTitle: "Мой сайт", Newer: "← Новее", Older: "Старше →", Latest: "Все новости",
 		NothingYet: "Пока ничего не опубликовано.", PageN: "Страница", NotFound: "Страница не найдена",
 		NotFoundText: "Такой страницы нет. Возможно, она удалена или адрес введён с ошибкой.",
 		BackHome:     "На главную", By: "Автор", Feed: "RSS-лента", SkipToContent: "К содержимому"}
-	langEN = &tr{Lang: "en", Locale: "en_US", DefaultTitle: "My site", Newer: "← Newer", Older: "Older →",
+	langEN = &tr{Lang: "en", Locale: "en_US", DefaultTitle: "My site", Newer: "← Newer", Older: "Older →", Latest: "More stories",
 		NothingYet: "Nothing has been published yet.", PageN: "Page", NotFound: "Page not found",
 		NotFoundText: "There is no such page. It may have been removed, or the address is mistyped.",
 		BackHome:     "Back to the front page", By: "By", Feed: "RSS feed", SkipToContent: "Skip to content"}

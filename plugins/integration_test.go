@@ -219,7 +219,7 @@ func TestWholeSystem(t *testing.T) {
 	}
 	for path, marker := range map[string]string{
 		"/sitemap.xml": "https://example.com/posts/more", "/feed.xml": "<title>Море</title>", "/robots.txt": "Sitemap: https://example.com/sitemap.xml",
-		"/": "<h1>Дневник</h1>", "/admin/": "",
+		"/": "<h1 class=\"sr-only\">Дневник</h1>", "/admin/": "",
 	} {
 		resp, b = do("GET", path, nil, "", nil)
 		if path == "/admin/" {

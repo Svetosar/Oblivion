@@ -1,11 +1,19 @@
 {{define "main"}}
-<h1>{{.SiteTitle}}</h1>
-{{with .SiteDescription}}<p class="lead" lang="{{$.ContentLang}}">{{.}}</p>{{end}}
-{{range .Posts}}<article class="entry" lang="{{$.ContentLang}}">
-<h2><a href="/posts/{{.Slug}}">{{.Title}}</a></h2>
-<time datetime="{{date .PublishedAt}}">{{date .PublishedAt}}</time>
-{{with .Excerpt}}<p>{{.}}</p>{{end}}
-</article>
+<h1 class="sr-only">{{.SiteTitle}}</h1>
+{{with .SiteDescription}}<p class="tagline" lang="{{$.ContentLang}}">{{.}}</p>{{end}}
+{{if and .Posts (not .Newer)}}{{with index .Posts 0}}<article class="lead" lang="{{$.ContentLang}}">
+<h2 class="h-lead"><a href="/posts/{{.Slug}}">{{.Title}}</a></h2>
+{{with .Excerpt}}<p class="dek">{{.}}</p>{{end}}
+<p class="meta"><time datetime="{{date .PublishedAt}}">{{date .PublishedAt}}</time></p>
+</article>{{end}}
+{{if gt (len .Posts) 1}}<h2 class="sec"{{.UIAttr}}>{{.UI.Latest}}</h2>
+<div class="panel">{{range slice .Posts 1}}{{template "row" (rowData . $.ContentLang)}}{{end}}</div>{{end}}
+{{else if .Posts}}<div class="panel">{{range .Posts}}{{template "row" (rowData . $.ContentLang)}}{{end}}</div>
 {{else}}<p{{$.UIAttr}}>{{$.UI.NothingYet}}</p>{{end}}
 <nav class="pager"{{.UIAttr}}>{{if .Newer}}<a href="{{.Newer}}" rel="prev">{{.UI.Newer}}</a>{{end}}{{if .Older}}<a href="{{.Older}}" rel="next">{{.UI.Older}}</a>{{end}}</nav>
 {{end}}
+{{define "row"}}<article class="row" lang="{{.Lang}}">
+<h3 class="h-row"><a href="/posts/{{.Post.Slug}}">{{.Post.Title}}</a></h3>
+{{with .Post.Excerpt}}<p>{{.}}</p>{{end}}
+<time datetime="{{date .Post.PublishedAt}}">{{date .Post.PublishedAt}}</time>
+</article>{{end}}

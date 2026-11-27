@@ -1,21 +1,84 @@
-:root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fff; --muted: #6b6b70; --link: #0b57d0; }
-@media (prefers-color-scheme: dark) { :root { --fg: #e8e8ea; --bg: #141416; --muted: #9a9aa0; --link: #8ab4f8; } }
+/* Public theme: the same warm ivory/slate language as the admin (see DESIGN.md at the repo root). */
+@font-face { font-family: "Onest"; font-style: normal; font-display: swap; font-weight: 100 900; src: url(/theme/fonts/onest-cyrillic.woff2) format("woff2-variations"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Onest"; font-style: normal; font-display: swap; font-weight: 100 900; src: url(/theme/fonts/onest-latin.woff2) format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Literata"; font-style: normal; font-display: swap; font-weight: 200 900; src: url(/theme/fonts/literata-cyrillic.woff2) format("woff2-variations"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Literata"; font-style: normal; font-display: swap; font-weight: 200 900; src: url(/theme/fonts/literata-latin.woff2) format("woff2-variations"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  color-scheme: light dark;
+  --bg: #FAF9F5; --surf: #fff; --sunk: #F0EEE6; --hov: #F5F4ED; --tx: #141413; --mu: #52514E;
+  --act: #141413; --acttx: #FAF9F5; --line: rgb(31 30 29 / .15); --line2: rgb(31 30 29 / .30); --mark: #D97757; --foc: #2370CD;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #262624; --surf: #30302E; --sunk: #1F1E1D; --hov: #3D3D3A; --tx: #FAF9F5; --mu: #C2C0B6; --act: #3D3D3A; --acttx: #FAF9F5; --line: rgb(222 220 209 / .15); --line2: rgb(222 220 209 / .30); --foc: #519CED; }
+}
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.6 system-ui, sans-serif; }
-header, main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
-header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
-header .site { font-weight: 700; text-decoration: none; color: inherit; }
-header nav a { margin-left: 1rem; display: inline-block; padding: .2rem 0; } /* the pager is a nav too: not indented, and links are tall enough to hit */
-a { color: var(--link); }
-h1 { line-height: 1.2; }
-.entry h2 { margin: 1.5rem 0 0; font-size: 1.3rem; }
-time, .meta { color: var(--muted); font-size: .9rem; }
-.pager { display: flex; justify-content: space-between; margin-top: 2rem; }
-.body img { max-width: 100%; height: auto; }
-.body pre { overflow-x: auto; padding: .75rem; background: color-mix(in srgb, var(--fg) 8%, transparent); }
-.body table { border-collapse: collapse; }
-.body td, .body th { border: 1px solid var(--muted); padding: .25rem .5rem; }
-.skip { position: absolute; left: -999px; top: 0; padding: .5rem 1rem; background: var(--bg); z-index: 10; }
+body { margin: 0; background: var(--bg); color: var(--tx); font: 400 1rem/1.55 "Onest", system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: inherit; }
+.wrap { max-width: 72rem; margin: 0 auto; padding: 0 2rem; }
+.skip { position: absolute; left: -999px; top: 0; padding: .5rem 1rem; background: var(--surf); z-index: 10; }
 .skip:focus { left: 0; }
-.lead { color: var(--muted); margin-top: -.5rem; }
-.entry p { margin: .25rem 0 0; color: var(--muted); font-size: .95rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+a:focus-visible { outline: 2px solid var(--foc); outline-offset: 3px; border-radius: 4px; }
+
+/* masthead */
+.mast { border-bottom: .5px solid var(--line2); }
+.mast .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1.5rem; padding-top: 1.5rem; padding-bottom: 1.25rem; }
+.site { display: inline-flex; align-items: center; gap: .65rem; font: 600 2.25rem/1 "Literata", Georgia, "Times New Roman", serif; letter-spacing: -.02em; text-decoration: none; }
+.site i { width: .6rem; height: .6rem; border-radius: 50%; background: var(--mark); margin-top: .3rem; }
+.mast nav { display: flex; flex-wrap: wrap; gap: 0 1.5rem; }
+.mast nav a { display: inline-block; padding: .55rem 0; color: var(--mu); text-decoration: none; font-weight: 500; }
+.mast nav a:hover { color: var(--tx); text-decoration: underline; }
+
+/* pages */
+.page { padding-top: 2.5rem; padding-bottom: 4rem; }
+.tagline { margin: 0 0 2rem; max-width: 40rem; color: var(--mu); font: 400 1.125rem/1.5 "Literata", Georgia, serif; }
+.h-lead { margin: 0; font: 600 3rem/1.1 "Literata", Georgia, serif; letter-spacing: -.02em; }
+.h-lead a, .h-row a { text-decoration: none; }
+.h-lead a:hover, .h-row a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.dek { margin: .9rem 0 0; max-width: 44rem; color: var(--mu); font: 400 1.25rem/1.55 "Literata", Georgia, serif; }
+.meta { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin: .9rem 0 0; font-size: .875rem; color: var(--mu); }
+.meta b { font-weight: 600; color: var(--tx); }
+time { color: var(--mu); }
+.sec { margin: 3rem 0 1rem; font: 500 1.75rem/1.2 "Literata", Georgia, serif; letter-spacing: -.01em; }
+.sec::before { content: ""; display: block; width: 2rem; height: 3px; margin-bottom: .75rem; border-radius: 3px; background: var(--tx); }
+.panel { background: var(--surf); border: .5px solid var(--line); border-radius: 1rem; box-shadow: 0 1px 2px rgb(20 19 19 / .06); overflow: hidden; }
+.row { padding: 1.25rem 1.5rem; border-top: .5px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row:hover { background: var(--hov); }
+.h-row { margin: 0; font: 600 1.25rem/1.3 "Literata", Georgia, serif; }
+.row p { margin: .35rem 0 0; color: var(--mu); }
+.row time { display: block; margin-top: .4rem; font-size: .875rem; }
+.pager { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 2rem; }
+.pager a { display: inline-flex; align-items: center; min-height: 2.5rem; padding: 0 1.25rem; border: 1px solid var(--line2); border-radius: .625rem; background: var(--surf); font-weight: 600; text-decoration: none; }
+.pager a:hover { background: var(--hov); }
+.pager a[rel="next"] { background: var(--act); color: var(--acttx); border-color: var(--act); }
+
+/* article */
+.entry-head { max-width: 46rem; }
+.entry-head h1 { margin: 0; font: 600 2.75rem/1.1 "Literata", Georgia, serif; letter-spacing: -.02em; }
+.body { max-width: 44rem; margin-top: 2rem; font: 400 1.25rem/1.7 "Literata", Georgia, "Times New Roman", serif; }
+.body h2, .body h3 { margin: 2rem 0 .5rem; font-family: "Literata", Georgia, serif; font-weight: 600; line-height: 1.2; letter-spacing: -.01em; }
+.body h2 { font-size: 1.875rem; }
+.body h3 { font-size: 1.5rem; }
+.body img { max-width: 100%; height: auto; border-radius: .75rem; }
+.body blockquote { margin: 1.5rem 0; padding: .25rem 0 .25rem 1.5rem; border-left: 3px solid var(--mark); font-size: 1.5rem; line-height: 1.4; }
+.body a { text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.body pre { overflow-x: auto; padding: .75rem 1rem; border-radius: .5rem; background: var(--sunk); font-size: .9rem; }
+.body table { border-collapse: collapse; }
+.body td, .body th { border: 1px solid var(--line2); padding: .25rem .5rem; }
+
+/* footer */
+.foot { border-top: .5px solid var(--line2); background: var(--sunk); }
+.foot .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1.5rem; padding-top: 1.5rem; padding-bottom: 1.5rem; color: var(--mu); font-size: .9375rem; }
+.foot .site { font-size: 1.5rem; }
+.foot a:not(.site) { padding: .4rem 0; }
+
+@media (max-width: 800px) {
+  .wrap { padding: 0 1rem; }
+  .site { font-size: 1.875rem; }
+  .h-lead { font-size: 2rem; }
+  .entry-head h1 { font-size: 2rem; }
+  .body { font-size: 1.125rem; }
+  .page { padding-top: 1.5rem; }
+}

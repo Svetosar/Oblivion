@@ -51,6 +51,16 @@ type pageData struct {
 
 var funcs = template.FuncMap{
 	"date": func(ts int64) string { return time.Unix(ts, 0).UTC().Format("2006-01-02") },
+	// rowData bundles one list entry with its language for the shared "row" template.
+	"rowData": func(p listEntry, lang string) struct {
+		Post listEntry
+		Lang string
+	} {
+		return struct {
+			Post listEntry
+			Lang string
+		}{p, lang}
+	},
 }
 
 func page(name string) *template.Template {
@@ -75,6 +85,7 @@ func (p *Plugin) registerPublic() error {
 		{"GET /{slug}/", p.redirectNoSlash("/")},
 		{"GET /theme/style.css", handleCSS},
 		{"GET /theme/favicon.svg", handleFavicon},
+		{"GET /theme/fonts/{name}", handleFont},
 		{"GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/theme/favicon.svg", http.StatusMovedPermanently)
 		}},
@@ -117,6 +128,31 @@ func handleFavicon(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(b)
+}
+
+// themeFonts are the only files served under /theme/fonts/ (self-hosted, SIL OFL 1.1).
+var themeFonts = map[string]bool{
+	"onest-latin.woff2": true, "onest-cyrillic.woff2": true,
+	"literata-latin.woff2": true, "literata-cyrillic.woff2": true,
+}
+
+// handleFont serves a bundled font. The name is looked up in a fixed list and never
+// joined to a path, so there is nothing to traverse. A font file never changes under
+// its name, hence the long immutable cache.
+func handleFont(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !themeFonts[name] {
+		http.NotFound(w, r)
+		return
+	}
+	b, err := themeFS.ReadFile("theme/fonts/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "font/woff2")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	_, _ = w.Write(b)
 }
 

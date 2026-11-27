@@ -17,14 +17,19 @@
 <meta name="twitter:card" content="{{if .Image}}summary_large_image{{else}}summary{{end}}">
 {{end}}{{.Head.JSONLD}}
 <link rel="icon" href="/theme/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/theme/fonts/literata-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/theme/style.css">
 </head>
 <body>
 <a class="skip" href="#main"{{.UIAttr}}>{{.UI.SkipToContent}}</a>
-<header>
-<a class="site" href="/">{{.SiteTitle}}</a>
+<header class="mast"><div class="wrap">
+<a class="site" href="/"><i></i>{{.SiteTitle}}</a>
 <nav>{{range .Nav}}<a href="/{{.Slug}}">{{.Title}}</a>{{end}}</nav>
-</header>
-<main id="main">{{template "main" .}}</main>
+</div></header>
+<main id="main" class="wrap page">{{template "main" .}}</main>
+<footer class="foot"><div class="wrap">
+<a class="site" href="/"><i></i>{{.SiteTitle}}</a>
+{{with .Head.RSS}}<a href="{{.}}"{{$.UIAttr}}>{{$.UI.Feed}}</a>{{end}}
+</div></footer>
 </body>
 </html>{{end}}

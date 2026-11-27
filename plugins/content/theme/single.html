@@ -1,7 +1,9 @@
 {{define "main"}}
 <article lang="{{.ContentLang}}">
+<header class="entry-head">
 <h1>{{.Item.Title}}</h1>
-{{if eq .Item.Kind "post"}}<p class="meta"{{.UIAttr}}><time datetime="{{date .Item.PublishedAt}}">{{date .Item.PublishedAt}}</time> · {{with .Byline}} · {{$.UI.By}}: {{.}}{{end}}</p>{{end}}
+{{if eq .Item.Kind "post"}}<p class="meta"{{.UIAttr}}>{{with .Byline}}<b>{{$.UI.By}}: {{.}}</b>{{end}}<time datetime="{{date .Item.PublishedAt}}">{{date .Item.PublishedAt}}</time></p>{{end}}
+</header>
 <div class="body">{{.Body}}</div>
 </article>
 {{end}}
