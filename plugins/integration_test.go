@@ -194,7 +194,7 @@ func TestWholeSystem(t *testing.T) {
 		`<html lang="ru">`, "<title>Море — Дневник</title>",
 		`<link rel="canonical" href="https://example.com/posts/more">`,
 		`<meta property="og:image" content="https://example.com` + media.URL + `">`,
-		`width="40" height="30" loading="lazy"`, // the media plugin's filter ran through the content plugin
+		`width="40" height="30" decoding="async"`, // the media plugin's filter ran through the content plugin (the first image is eager)
 		"<h2>Раздел</h2>", `"@type":"BlogPosting"`,
 	} {
 		if !strings.Contains(page, need) {

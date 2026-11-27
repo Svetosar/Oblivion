@@ -78,6 +78,7 @@ func (p *Plugin) filterHTML(ctx context.Context, v any) (any, error) {
 	if !ok || !strings.Contains(html, "/media/") {
 		return v, nil
 	}
+	first := true // the first annotated image is eager: it is usually what the visitor sees first
 	return imgTag.ReplaceAllStringFunc(html, func(tag string) string {
 		m := imgSrc.FindStringSubmatch(tag)
 		if m == nil || hasAttrs.MatchString(tag) {
@@ -87,7 +88,11 @@ func (p *Plugin) filterHTML(ctx context.Context, v any) (any, error) {
 		if !ok {
 			return tag
 		}
-		extra := fmt.Sprintf(` width="%d" height="%d" loading="lazy" decoding="async"`, d.w, d.h)
+		loading := ` loading="lazy"`
+		if first {
+			loading, first = "", false
+		}
+		extra := fmt.Sprintf(` width="%d" height="%d"%s decoding="async"`, d.w, d.h, loading)
 		if strings.HasSuffix(tag, "/>") {
 			return tag[:len(tag)-2] + extra + "/>"
 		}

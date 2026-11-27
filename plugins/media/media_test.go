@@ -652,19 +652,24 @@ func uploadSlowly(t *testing.T, tweak func(*http.Server)) {
 	}
 }
 
-func TestHTMLFilterAddsDimensionsAndLazyLoading(t *testing.T) {
+// The first image of a page is usually the one the visitor sees at once: lazy loading it
+// delays the largest paint, so only the images after it are lazy.
+func TestHTMLFilterAddsDimensionsAndLazyLoadsAllButTheFirst(t *testing.T) {
 	e := newEnv(t)
 	it := decodeItem(t, e.upload("author:3", "a.png", pngWithMetadata(t))) // 8x6
-	in := `<p>x</p><img src="` + it.URL + `" alt="a"><img src="/media/` + strings.Repeat("0", 32) + `.png" alt="unknown"><img src="https://other.example/x.png" alt="ext">`
+	in := `<p>x</p><img src="` + it.URL + `" alt="a"><img src="/media/` + strings.Repeat("0", 32) + `.png" alt="unknown"><img src="https://other.example/x.png" alt="ext"><img src="` + it.URL + `" alt="b">`
 	got, err := e.plugin.filterHTML(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := got.(string)
-	if !strings.Contains(out, `<img src="`+it.URL+`" alt="a" width="8" height="6" loading="lazy" decoding="async">`) {
-		t.Errorf("known image not annotated: %s", out)
+	if !strings.Contains(out, `<img src="`+it.URL+`" alt="a" width="8" height="6" decoding="async">`) {
+		t.Errorf("the first image must not be lazy: %s", out)
 	}
-	if strings.Count(out, "width=") != 1 {
+	if !strings.Contains(out, `<img src="`+it.URL+`" alt="b" width="8" height="6" loading="lazy" decoding="async">`) {
+		t.Errorf("later images must be lazy: %s", out)
+	}
+	if strings.Count(out, "width=") != 2 {
 		t.Errorf("unknown and external images must be left alone: %s", out)
 	}
 	// Idempotent: running the filter again changes nothing.
